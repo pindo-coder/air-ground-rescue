@@ -1,0 +1,23 @@
+{
+  "scenario_id": "A",
+  "mission": "Search natural off-road terrain for a casualty; no marked route or prior map.",
+  "goal_hint": {
+    "reference": "initial_camera_forward",
+    "center_deg_left_positive": 15,
+    "half_width_deg": 20,
+    "issued_once": true
+  },
+  "camera": {
+    "width": 640,
+    "height": 480,
+    "fov_rad": 1.5707963268,
+    "baseline_m": 0.14,
+    "height_m": 0.3,
+    "pitch_rad": 0.08,
+    "period_ms": 100
+  },
+  "action_limits": {
+    "linear_m_s": 0.35,
+    "angular_rad_s": 1.0
+  }
+}

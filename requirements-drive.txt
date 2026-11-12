@@ -1,0 +1,3 @@
+# Optional existing stereo motion demo only; static scene preview needs neither.
+numpy
+opencv-python

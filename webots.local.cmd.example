@@ -1,0 +1,6 @@
+@echo off
+rem Copy to webots.local.cmd, then set your own Webots installation directory.
+rem This local copy is ignored by Git.
+set "WEBOTS_HOME=%ProgramFiles%\Webots"
+rem Alternatively specify the complete executable path:
+rem set "WEBOTS_EXE=E:\Webots\msys64\mingw64\bin\webotsw.exe"

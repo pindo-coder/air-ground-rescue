@@ -1,0 +1,35 @@
+# Simulation output and temporary validation worlds
+/runs/
+/worlds/_validation_*.wbt
+/worlds/._validation_*.wbproj
+/worlds/.*.jpg
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Machine-specific Webots/Python configuration
+/webots.local.cmd
+/controllers/**/runtime.ini
+
+# Local credentials, logs, editors and archive exports
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+*~
+*.zip
+*.7z
+*.rar
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep the real worlds/*.wbproj layouts, preview images and all scene assets.

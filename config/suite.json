@@ -1,0 +1,14 @@
+{
+  "origin": [-21.0, -15.0],
+  "size_m": [42.0, 30.0],
+  "terrain_spacing_m": 0.125,
+  "texture_size": 2048,
+  "scenario_seeds": {"A": 101, "B": 202, "C": 303},
+  "camera": {"width": 640, "height": 480, "fov_rad": 1.5707963268, "baseline_m": 0.14, "height_m": 0.30, "pitch_rad": 0.08, "period_ms": 100},
+  "goal_hint_half_width_deg": 20,
+  "nominal_speed_limit_m_s": 0.35,
+  "turn_rate_limit_rad_s": 1.0,
+  "success_distance_m": 1.5,
+  "required_stop_duration_s": 2.0,
+  "episode_timeout_s": 600
+}

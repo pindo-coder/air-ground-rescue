@@ -1,0 +1,22 @@
+# Stable text files across Windows and other operating systems
+* text=auto
+*.md text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.wbt text eol=lf
+*.proto text eol=lf
+*.wbproj text eol=lf
+*.cmd text eol=crlf
+*.cmd.example text eol=crlf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Binary assets stay in ordinary Git; no Git LFS setup is required.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.hdr binary
+*.webp binary
+*.glb binary
+*.bin binary

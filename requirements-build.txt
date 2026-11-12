@@ -1,0 +1,3 @@
+# Scene generation, offline geometry tests and screenshot validation.
+numpy==2.3.5
+Pillow==13.0.0
