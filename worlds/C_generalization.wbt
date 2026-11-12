@@ -1807,79 +1807,87 @@ DEF TARGET_SHRUB Solid { name "target_shrub"
 DEF CASUALTY Solid { name "casualty"
           translation 15.90000 9.00000 1.68488 rotation -0.140338 0.011108 -0.990041 1.011952
           children [ Pose { translation -0.250000 0.000000 0.145000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .46 .43 .29 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_TORSO Box { size 0.480000 0.330000 0.210000 }
             } ] } Pose { translation 0.090000 0.000000 0.120000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_PELVIS Box { size 0.220000 0.310000 0.180000 }
-            } ] } Pose { translation -0.540000 0.000000 0.140000 rotation 0.000000 1.000000 0.000000 1.570796 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
-              geometry DEF GEO_CASUALTY_NECK Cylinder { radius 0.06500 height 0.10000 subdivision 10 }
-            } ] } Pose { translation -0.660000 0.000000 0.145000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+            } ] } Pose { translation -0.475000 0.000000 0.125000 rotation 0.000000 1.000000 0.000000 1.570796 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
+              geometry DEF GEO_CASUALTY_NECK Cylinder { radius 0.05500 height 0.07000 subdivision 10 }
+            } ] } Pose { translation -0.600000 0.000000 0.133000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_HEAD Sphere { radius 0.11500 subdivision 3 }
-            } ] } Pose { translation -0.690000 0.000000 0.140000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .12 .10 .085 roughness .81 metalness 0 }
+            } ] } Pose { translation -0.630000 0.000000 0.128000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_HAIR Sphere { radius 0.10500 subdivision 3 }
-            } ] } Pose { translation -0.640000 0.000000 0.250000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+            } ] } Pose { translation -0.580000 0.000000 0.238000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_NOSE Sphere { radius 0.02500 subdivision 3 }
-            } ] } Pose { translation -0.680000 0.043000 0.248000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .08 .07 .065 roughness .81 metalness 0 }
+            } ] } Pose { translation -0.620000 0.043000 0.236000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_EYE_L Sphere { radius 0.01000 subdivision 3 }
-            } ] } Pose { translation -0.680000 -0.043000 0.248000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .08 .07 .065 roughness .81 metalness 0 }
+            } ] } Pose { translation -0.620000 -0.043000 0.236000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_EYE_R Sphere { radius 0.01000 subdivision 3 }
             } ] } Pose { translation -0.285000 -0.250000 0.120000 rotation 0.371391 0.928477 -0.000000 1.718274 children [ Shape {
-              appearance PBRAppearance { baseColor .46 .43 .29 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_UPPER_ARM_R Cylinder { radius 0.06600 height 0.27221 subdivision 10 }
             } ] } Pose { translation -0.050000 -0.340000 0.087500 rotation 0.341743 0.939793 -0.000000 1.677188 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_FOREARM_R Cylinder { radius 0.05200 height 0.23543 subdivision 10 }
             } ] } Pose { translation 0.280000 -0.107500 0.115000 rotation 0.083045 0.996546 -0.000000 1.604002 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_THIGH_R Cylinder { radius 0.08300 height 0.30121 subdivision 10 }
             } ] } Pose { translation 0.590000 -0.130000 0.100000 rotation 0.062378 0.998053 -0.000000 1.633094 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_SHIN_R Cylinder { radius 0.06500 height 0.32125 subdivision 10 }
             } ] } Pose { translation 0.060000 -0.380000 0.075000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_HAND_R Sphere { radius 0.05200 subdivision 3 }
             } ] } Pose { translation 0.430000 -0.120000 0.110000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_KNEE_R Sphere { radius 0.08200 subdivision 3 }
             } ] } Pose { translation 0.840000 -0.140000 0.085000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .10 .095 .085 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_BOOT_R Box { size 0.200000 0.115000 0.115000 }
             } ] } Pose { translation -0.285000 0.250000 0.120000 rotation -0.371391 0.928477 0.000000 1.718274 children [ Shape {
-              appearance PBRAppearance { baseColor .46 .43 .29 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_UPPER_ARM_L Cylinder { radius 0.06600 height 0.27221 subdivision 10 }
             } ] } Pose { translation -0.050000 0.340000 0.087500 rotation -0.341743 0.939793 0.000000 1.677188 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_FOREARM_L Cylinder { radius 0.05200 height 0.23543 subdivision 10 }
             } ] } Pose { translation 0.280000 0.107500 0.115000 rotation -0.083045 0.996546 0.000000 1.604002 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_THIGH_L Cylinder { radius 0.08300 height 0.30121 subdivision 10 }
             } ] } Pose { translation 0.590000 0.130000 0.100000 rotation -0.062378 0.998053 0.000000 1.633094 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_SHIN_L Cylinder { radius 0.06500 height 0.32125 subdivision 10 }
             } ] } Pose { translation 0.060000 0.380000 0.075000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .62 .44 .33 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_HAND_L Sphere { radius 0.05200 subdivision 3 }
             } ] } Pose { translation 0.430000 0.120000 0.110000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .16 .19 .22 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_KNEE_L Sphere { radius 0.08200 subdivision 3 }
             } ] } Pose { translation 0.840000 0.140000 0.085000 rotation 0.000000 0.000000 1.000000 0.000000 children [ Shape {
-              appearance PBRAppearance { baseColor .10 .095 .085 roughness .81 metalness 0 }
+              appearance PBRAppearance { transparency 1 roughness 1 metalness 0 }
               geometry DEF GEO_CASUALTY_BOOT_L Box { size 0.200000 0.115000 0.115000 }
-            } ] } ] boundingObject Group { children [ Pose { translation -0.250000 0.000000 0.145000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_TORSO ] }
+            } ] }
+      DEF CASUALTY_RENDER Group { children [
+Shape { appearance PBRAppearance { baseColor .46 .43 .29 baseColorMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg" ] filtering 5 } normalMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg" ] filtering 5 } roughnessMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_roughness.jpg" ] filtering 5 } normalMapFactor .55 roughness .95 metalness 0 } geometry Mesh { url [ "../assets/render/casualty_C_shirt.obj" ] } }
+Shape { appearance PBRAppearance { baseColor .64 .46 .35  normalMapFactor .55 roughness .95 metalness 0 } geometry Mesh { url [ "../assets/render/casualty_C_skin.obj" ] } }
+Shape { appearance PBRAppearance { baseColor .19 .21 .24 baseColorMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg" ] filtering 5 } normalMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg" ] filtering 5 } roughnessMap ImageTexture { url [ "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_roughness.jpg" ] filtering 5 } normalMapFactor .55 roughness .95 metalness 0 } geometry Mesh { url [ "../assets/render/casualty_C_pants.obj" ] } }
+Shape { appearance PBRAppearance { baseColor .07 .065 .06  normalMapFactor .55 roughness .95 metalness 0 } geometry Mesh { url [ "../assets/render/casualty_C_shoes.obj" ] } }
+Shape { appearance PBRAppearance { baseColor 1 1 1 baseColorMap ImageTexture { url [ "../assets/upstream/head_scan/Map-COL.jpg" ] filtering 5 } normalMap ImageTexture { url [ "../assets/upstream/head_scan/Infinite-Level_02_Tangent_SmoothUV.jpg" ] filtering 5 } normalMapFactor .55 roughness .95 metalness 0 } geometry Mesh { url [ "../assets/render/head_scan.obj" ] } }
+] }
+    ] boundingObject Group { children [ Pose { translation -0.250000 0.000000 0.145000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_TORSO ] }
 Pose { translation 0.090000 0.000000 0.120000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_PELVIS ] }
-Pose { translation -0.540000 0.000000 0.140000 rotation 0.000000 1.000000 0.000000 1.570796 children [ USE GEO_CASUALTY_NECK ] }
-Pose { translation -0.660000 0.000000 0.145000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_HEAD ] }
-Pose { translation -0.690000 0.000000 0.140000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_HAIR ] }
-Pose { translation -0.640000 0.000000 0.250000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_NOSE ] }
-Pose { translation -0.680000 0.043000 0.248000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_EYE_L ] }
-Pose { translation -0.680000 -0.043000 0.248000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_EYE_R ] }
+Pose { translation -0.475000 0.000000 0.125000 rotation 0.000000 1.000000 0.000000 1.570796 children [ USE GEO_CASUALTY_NECK ] }
+Pose { translation -0.600000 0.000000 0.133000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_HEAD ] }
+Pose { translation -0.630000 0.000000 0.128000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_HAIR ] }
+Pose { translation -0.580000 0.000000 0.238000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_NOSE ] }
+Pose { translation -0.620000 0.043000 0.236000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_EYE_L ] }
+Pose { translation -0.620000 -0.043000 0.236000 rotation 0.000000 0.000000 1.000000 0.000000 children [ USE GEO_CASUALTY_EYE_R ] }
 Pose { translation -0.285000 -0.250000 0.120000 rotation 0.371391 0.928477 -0.000000 1.718274 children [ USE GEO_CASUALTY_UPPER_ARM_R ] }
 Pose { translation -0.050000 -0.340000 0.087500 rotation 0.341743 0.939793 -0.000000 1.677188 children [ USE GEO_CASUALTY_FOREARM_R ] }
 Pose { translation 0.280000 -0.107500 0.115000 rotation 0.083045 0.996546 -0.000000 1.604002 children [ USE GEO_CASUALTY_THIGH_R ] }

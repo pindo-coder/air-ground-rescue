@@ -7,6 +7,8 @@
 *.wbt text eol=lf
 *.proto text eol=lf
 *.wbproj text eol=lf
+*.obj text eol=lf
+*.gltf text eol=lf
 *.cmd text eol=crlf
 *.cmd.example text eol=crlf
 .gitignore text eol=lf

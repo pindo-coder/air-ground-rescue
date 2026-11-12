@@ -1,4 +1,4 @@
-"""Local procedural rescue props. No policy, textures, or remote assets required."""
+"""Flood rescue props with local textured visuals and simplified collision."""
 from __future__ import annotations
 
 import math
@@ -7,6 +7,7 @@ import random
 import numpy as np
 from render_style import appearance, foliage_cluster
 from flood_ruins import add_flood_ruins
+from casualty_visual import casualty_render, HEAD_PROXY_POSITIONS, NECK_PROXY_DIMENSIONS, VISUAL_MODEL
 
 
 def numbers(values):
@@ -131,6 +132,8 @@ class RescueElements:
             if style is None and kind in ("rubble", "broken_wall"):
                 style = "plaster"
             material = appearance(style, "0.9 0.86 0.78") if style else f"PBRAppearance {{ baseColor {item['color']} roughness .81 metalness 0 }}"
+            if target:
+                material = "PBRAppearance { transparency 1 roughness 1 metalness 0 }"
             if kind == "shrub" and item["name"].startswith("LEAVES"):
                 geometry = foliage_cluster(dims[0])
                 material = 'PBRAppearance { baseColor .72 .83 .63 baseColorMap ImageTexture { url [ "../protos/textures/pine_leaves.png" ] } roughness .92 metalness 0 }'
@@ -143,6 +146,8 @@ class RescueElements:
             elif shape == "Sphere":
                 center = np.array([x, y, ground]) + frame @ np.asarray(item["at"])
                 self.foliage.append({"def": name, "center": center.tolist(), "radius": dims[0]})
+        if target:
+            visual.append(casualty_render(self.p["key"]))
         bounding = "boundingObject Group { children [ " + "\n".join(collision) + " ] }" if collision else ""
         self.nodes.append(f'''DEF {name} Solid {{ name "{name.lower()}"
           translation {x:.5f} {y:.5f} {ground:.5f} rotation {numbers(axis_angle(frame))}
@@ -202,9 +207,14 @@ class RescueElements:
             pieces.extend([part(f"HAND_{suffix}", "Sphere", [.052], wrist, skin),
                            part(f"KNEE_{suffix}", "Sphere", [.082], knee, pants),
                            part(f"BOOT_{suffix}", "Box", [.20, .115, .115], [.84, side * .14, .085], ".10 .095 .085")])
+        for item in pieces:
+            if item["name"] in HEAD_PROXY_POSITIONS:
+                item["at"] = list(HEAD_PROXY_POSITIONS[item["name"]])
+            if item["name"] == "NECK":
+                item["dimensions"] = list(NECK_PROXY_DIMENSIONS)
         yaw = {"A": -.45, "B": .75, "C": -1.0}[key]
         record = self.add("CASUALTY", "casualty", self.p["goal"], yaw, pieces, target=True)
-        record.update({"shirt_color": shirt, "pose": "supine", "body_length_m": 1.72})
+        record.update({"shirt_color": shirt, "pose": "supine", "body_length_m": 1.67, "visual_model": VISUAL_MODEL})
         return {"xy": list(self.p["goal"]), "size": [1.76, .85, .29], "yaw": yaw}
 
     def build(self):

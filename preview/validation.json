@@ -1,32 +1,38 @@
 [
   {
+    "scenario": "A",
+    "exit_code": 0,
+    "camera_images": 4,
     "scene_loaded": true,
     "simulation_seconds": 12.0,
-    "rover_clearance_m": -0.0004547682119201424,
+    "rover_clearance_m": -0.0004547682119196983,
     "upright": true,
-    "stationary_speed_m_s": 1.458202005386505e-14,
+    "stationary_speed_m_s": 3.77378242493482e-16,
     "public_task_has_no_world_coordinates": true,
-    "status": "PREVIEW",
-    "scenario": "A"
+    "status": "PREVIEW"
   },
   {
+    "scenario": "B",
+    "exit_code": 0,
+    "camera_images": 4,
     "scene_loaded": true,
     "simulation_seconds": 12.0,
-    "rover_clearance_m": -0.0004547682119202534,
+    "rover_clearance_m": -0.00045476821191936523,
     "upright": true,
-    "stationary_speed_m_s": 1.3476677978918552e-14,
+    "stationary_speed_m_s": 2.525780361035635e-16,
     "public_task_has_no_world_coordinates": true,
-    "status": "PREVIEW",
-    "scenario": "B"
+    "status": "PREVIEW"
   },
   {
+    "scenario": "C",
+    "exit_code": 0,
+    "camera_images": 4,
     "scene_loaded": true,
     "simulation_seconds": 12.0,
     "rover_clearance_m": -0.00045476821192003136,
     "upright": true,
     "stationary_speed_m_s": 2.9240614994293267e-14,
     "public_task_has_no_world_coordinates": true,
-    "status": "PREVIEW",
-    "scenario": "C"
+    "status": "PREVIEW"
   }
 ]

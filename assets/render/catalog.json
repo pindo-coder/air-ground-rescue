@@ -1,0 +1,145 @@
+{
+  "revision": 2,
+  "head_center_local_m": [
+    -0.6,
+    0,
+    0.143
+  ],
+  "human": {
+    "A": {
+      "parts": [
+        {
+          "mesh": "casualty_A_shirt.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".48 .26 .20"
+        },
+        {
+          "mesh": "casualty_A_skin.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".64 .46 .35"
+        },
+        {
+          "mesh": "casualty_A_pants.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".19 .21 .24"
+        },
+        {
+          "mesh": "casualty_A_shoes.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".07 .065 .06"
+        },
+        {
+          "mesh": "head_scan.obj",
+          "albedo": "upstream/head_scan/Map-COL.jpg",
+          "normal": "upstream/head_scan/Infinite-Level_02_Tangent_SmoothUV.jpg"
+        }
+      ],
+      "bounds": [
+        [
+          -0.5052431178092958,
+          -0.28216443479061126,
+          0.020000000000000004
+        ],
+        [
+          0.94,
+          0.28216434389352796,
+          0.2766250950098038
+        ]
+      ]
+    },
+    "B": {
+      "parts": [
+        {
+          "mesh": "casualty_B_shirt.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".19 .29 .44"
+        },
+        {
+          "mesh": "casualty_B_skin.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".64 .46 .35"
+        },
+        {
+          "mesh": "casualty_B_pants.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".19 .21 .24"
+        },
+        {
+          "mesh": "casualty_B_shoes.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".07 .065 .06"
+        },
+        {
+          "mesh": "head_scan.obj",
+          "albedo": "upstream/head_scan/Map-COL.jpg",
+          "normal": "upstream/head_scan/Infinite-Level_02_Tangent_SmoothUV.jpg"
+        }
+      ],
+      "bounds": [
+        [
+          -0.5052096676826476,
+          -0.20582213789224624,
+          0.020000000000000004
+        ],
+        [
+          0.94,
+          0.20582210153341293,
+          0.2766250950098038
+        ]
+      ]
+    },
+    "C": {
+      "parts": [
+        {
+          "mesh": "casualty_C_shirt.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".46 .43 .29"
+        },
+        {
+          "mesh": "casualty_C_skin.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".64 .46 .35"
+        },
+        {
+          "mesh": "casualty_C_pants.obj",
+          "albedo": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg",
+          "normal": "upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg",
+          "color": ".19 .21 .24"
+        },
+        {
+          "mesh": "casualty_C_shoes.obj",
+          "albedo": null,
+          "normal": null,
+          "color": ".07 .065 .06"
+        },
+        {
+          "mesh": "head_scan.obj",
+          "albedo": "upstream/head_scan/Map-COL.jpg",
+          "normal": "upstream/head_scan/Infinite-Level_02_Tangent_SmoothUV.jpg"
+        }
+      ],
+      "bounds": [
+        [
+          -0.5052383184432983,
+          -0.2484996274113655,
+          0.020000000000000004
+        ],
+        [
+          0.94,
+          0.2484995546936989,
+          0.2766250950098038
+        ]
+      ]
+    }
+  }
+}

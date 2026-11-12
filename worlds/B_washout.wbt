@@ -32,7 +32,7 @@ WorldInfo {
 DEF SCENE_VIEW Viewpoint {
   fieldOfView 0.95
   orientation -0.5280919575627991 0.035136754123825435 0.848459953602486 3.215194041033948
-  position 19.034122491325817 11.163662527674084 6.646794421513956
+  position 17.028912409934218 10.50346009234401 3.0906940536209273
   far 240
   exposure 1.35
   ambientOcclusionRadius 0.85
@@ -10050,8 +10050,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.19 0.29 0.44
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_TORSO Box {
@@ -10065,8 +10065,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_PELVIS Box {
@@ -10081,8 +10081,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_NECK Cylinder {
@@ -10098,8 +10098,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_HEAD Sphere {
@@ -10114,8 +10114,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.12 0.1 0.085
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_HAIR Sphere {
@@ -10130,8 +10130,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_NOSE Sphere {
@@ -10146,8 +10146,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.08 0.07 0.065
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_EYE_L Sphere {
@@ -10162,8 +10162,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.08 0.07 0.065
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_EYE_R Sphere {
@@ -10179,8 +10179,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.19 0.29 0.44
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_UPPER_ARM_R Cylinder {
@@ -10197,8 +10197,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_FOREARM_R Cylinder {
@@ -10215,8 +10215,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_THIGH_R Cylinder {
@@ -10233,8 +10233,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_SHIN_R Cylinder {
@@ -10250,8 +10250,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_HAND_R Sphere {
@@ -10266,8 +10266,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_KNEE_R Sphere {
@@ -10282,8 +10282,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.1 0.095 0.085
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_BOOT_R Box {
@@ -10298,8 +10298,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.19 0.29 0.44
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_UPPER_ARM_L Cylinder {
@@ -10316,8 +10316,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_FOREARM_L Cylinder {
@@ -10334,8 +10334,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_THIGH_L Cylinder {
@@ -10352,8 +10352,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_SHIN_L Cylinder {
@@ -10369,8 +10369,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.62 0.44 0.33
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_HAND_L Sphere {
@@ -10385,8 +10385,8 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.16 0.19 0.22
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_KNEE_L Sphere {
@@ -10401,13 +10401,147 @@ DEF CASUALTY Solid {
       children [
         Shape {
           appearance PBRAppearance {
-            baseColor 0.1 0.095 0.085
-            roughness 0.81
+            transparency 1
+            roughness 1
             metalness 0
           }
           geometry DEF GEO_CASUALTY_BOOT_L Box {
             size 0.2 0.115 0.115
           }
+        }
+      ]
+    }
+    DEF CASUALTY_RENDER Group {
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.19 0.29 0.44
+            baseColorMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg"
+              ]
+              filtering 5
+            }
+            roughness 0.95
+            roughnessMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_roughness.jpg"
+              ]
+              filtering 5
+            }
+            metalness 0
+            normalMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg"
+              ]
+              filtering 5
+            }
+            normalMapFactor 0.55
+          }
+          geometry Mesh {
+            url [
+              "../assets/render/casualty_B_shirt.obj"
+            ]
+          }
+        }
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.64 0.46 0.35
+            roughness 0.95
+            metalness 0
+            normalMapFactor 0.55
+          }
+          geometry Mesh {
+            url [
+              "../assets/render/casualty_B_skin.obj"
+            ]
+          }
+        }
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.19 0.21 0.24
+            baseColorMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_base_color.jpg"
+              ]
+              filtering 5
+            }
+            roughness 0.95
+            roughnessMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_roughness.jpg"
+              ]
+              filtering 5
+            }
+            metalness 0
+            normalMap ImageTexture {
+              url [
+                "../assets/upstream/webots/projects/appearances/protos/textures/fabric/fabric_normal.jpg"
+              ]
+              filtering 5
+            }
+            normalMapFactor 0.55
+          }
+          geometry Mesh {
+            url [
+              "../assets/render/casualty_B_pants.obj"
+            ]
+          }
+        }
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.07 0.065 0.06
+            roughness 0.95
+            metalness 0
+            normalMapFactor 0.55
+          }
+          geometry Mesh {
+            url [
+              "../assets/render/casualty_B_shoes.obj"
+            ]
+          }
+        }
+        Shape {
+          appearance PBRAppearance {
+            baseColorMap ImageTexture {
+              url [
+                "../assets/upstream/head_scan/Map-COL.jpg"
+              ]
+              filtering 5
+            }
+            roughness 0.95
+            metalness 0
+            normalMap ImageTexture {
+              url [
+                "../assets/upstream/head_scan/Infinite-Level_02_Tangent_SmoothUV.jpg"
+              ]
+              filtering 5
+            }
+            normalMapFactor 0.55
+          }
+          geometry Mesh {
+            url [
+              "../assets/render/head_scan.obj"
+            ]
+          }
+        }
+        Pose {
+          translation -0.54 0 0.14
+          rotation 0 1 0 1.5707963268
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.64 0.46 0.35
+                roughness 0.9
+                metalness 0
+              }
+              geometry Cylinder {
+                height 0.1
+                radius 0.065
+                subdivision 32
+              }
+            }
+          ]
         }
       ]
     }
@@ -19794,12 +19928,18 @@ DEF HOUSE_FOUNDATION_DEBRIS_16 Solid {
   }
 }
 DEF ROVER VisionRover {
-  hidden position_0_0 1.3840076075322861e-15
-  hidden position_0_1 3.662237182095535e-15
+  hidden position_0_0 1.4179392492278048e-13
+  hidden position_0_1 2.3419521651363176e-14
+  hidden linearVelocity_0 -1.2429912899997856e-16 1.982239559433838e-16 -8.000711204658729e-15
+  hidden angularVelocity_0 4.003304037557043e-16 -5.719200723524561e-16 1.7018163029952844e-17
+  hidden linearVelocity_3 -1.7346053435810395e-16 5.039553709420514e-16 8.402190004560573e-15
+  hidden angularVelocity_3 -6.490331814441441e-15 -2.379106526417844e-15 1.6587413551797624e-17
+  hidden linearVelocity_4 -1.349790838458999e-16 3.636987813036181e-16 7.904783724152886e-15
+  hidden angularVelocity_4 -5.59400448558691e-15 -2.1024260360758497e-15 1.7073242313795664e-17
   translation -17.999999999999996 -11.000000000000002 1.1912452317880806
-  rotation -3.893842823015808e-13 -4.411827741258618e-14 1 0.2236881000000001
+  rotation -3.90410749770035e-13 -4.6316061908746603e-14 1 0.22368810000000014
   name "Vision Rescue Rover"
-  customData "{\"scenario_id\": \"B\", \"mission\": \"Search natural off-road terrain for a casualty; no marked route or prior map.\", \"goal_hint\": {\"reference\": \"initial_camera_forward\", \"center_deg_left_positive\": 20, \"half_width_deg\": 20, \"issued_once\": true}, \"camera\": {\"width\": 640, \"height\": 480, \"fov_rad\": 1.5707963268, \"baseline_m\": 0.14, \"height_m\": 0.3, \"pitch_rad\": 0.08, \"period_ms\": 100}, \"action_limits\": {\"linear_m_s\": 0.35, \"angular_rad_s\": 1.0}}"
+  customData "{\"scenario_id\": \"B\", \"run_id\": \"20261112_185532_8212\", \"timestamp_s\": 2284.4, \"active\": false, \"claim_arrival\": false, \"v_m_s\": 0.0, \"omega_rad_s\": 0.0}"
 }
 DEF EVALUATOR Robot {
   name "Independent evaluator"
