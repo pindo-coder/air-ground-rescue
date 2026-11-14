@@ -1,0 +1,4 @@
+# Shared by every LiDAR/RGB-D algorithm and ablation.
+-r requirements-build.txt
+opencv-python==4.13.0.92
+scipy==1.17.1

@@ -1,0 +1,5 @@
+@echo off
+rem Set this to the interpreter with requirements-search[-yolo].txt installed.
+set "SEARCH_PYTHON=python"
+rem Optional non-default Webots executable:
+rem set "SEARCH_WEBOTS_EXE=C:\Program Files\Webots\msys64\mingw64\bin\webots.exe"
