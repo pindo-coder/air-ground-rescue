@@ -5,6 +5,7 @@
 /worlds/.*.jpg
 /worlds/search_*.wbt
 /worlds/.search_*.wbproj
+/worlds/textures/D_ground*
 /config/search/public/*.json
 /evaluation/search/*.json
 /models/*.pt
