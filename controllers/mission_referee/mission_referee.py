@@ -32,6 +32,7 @@ length=0.;previous=None;stationary=0.;path=[];ended=False
 mission_config=json.loads((root/"config/search/common.json").read_text())
 physical_cargo=mission_config["cargo_capacity"]
 unsafe_state=False
+world_min,world_max=truth.get('bounds_xy',[[-20.6,-14.6],[20.6,14.6]])
 time_file=None
 
 
@@ -75,6 +76,9 @@ def summary(now):
         mission_success=(len(matches)==len(targets) and
                          len({d["victim_id"] for d in valid_delivery if d["deadline_met"]})==len(targets) and contacts==0 and not unsafe_state),
         collisions=contacts,path_length_m=round(length,3),truth_targets=len(targets),
+        fusion_enabled=message.get('fusion_enabled',False),aerial_packets=message.get('aerial_packets',0),
+        cross_view_tracks=message.get('cross_view_tracks',0),
+        valid_cross_view_reports=sum({'rover','uav'}<=set(reports[i].get('sources',[])) for i in matches),
         evaluation_only=True,status="FINISHED" if now>=duration else "RUNNING",unsafe_state=unsafe_state,
         limitations=["prototype detector calibration pending","2D local odometry without loop closure",
                      "delivery is a stationary drop event, not a simulated manipulator"],
@@ -97,7 +101,8 @@ try:
         method_name=message.get("method",method_name)
         detector_name=message.get("detector",detector_name)
         position=rover.getPosition()
-        unsafe_state=unsafe_state or rover.getOrientation()[8]<.5 or not (-20.6<position[0]<20.6 and -14.6<position[1]<14.6)
+        unsafe_state=unsafe_state or rover.getOrientation()[8]<.5 or not (
+            world_min[0]<position[0]<world_max[0] and world_min[1]<position[1]<world_max[1])
         if previous is not None:length+=math.dist(previous[:2],position[:2])
         previous=position
         speed=math.hypot(*rover.getVelocity()[:2])
