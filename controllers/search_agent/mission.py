@@ -8,7 +8,8 @@ from mapping import rotation
 
 def delivery_guidance(track,pose,now):
     """Reacquire locally before a drop; map arrival alone is insufficient."""
-    if track.latest_local is None or track.observation_pose is None or now-track.last_seen>2.:
+    local_seen=track.last_seen if track.local_last_seen is None else track.local_last_seen
+    if track.latest_local is None or track.observation_pose is None or now-local_seen>2.:
         return None
     seen=track.observation_pose
     target=seen[:2]+rotation(seen[2]) @ track.latest_local

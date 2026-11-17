@@ -41,11 +41,13 @@ def covariance_intersection(a, pa, b, pb):
 
 
 class PersonDetector:
-    def __init__(self, mode, root, bias_std=.18):
+    def __init__(self, mode, root, bias_std=.18, max_depth=8., field_of_view=math.pi/2):
         if mode not in ("yolo","surrogate_rgbd"):
             raise ValueError(f"Unknown detector: {mode}")
         self.mode=mode
         self.bias_std=bias_std
+        self.max_depth=max_depth
+        self.field_of_view=field_of_view
         self.model = None
         if mode == "yolo":
             from ultralytics import YOLO,settings
@@ -72,7 +74,7 @@ class PersonDetector:
         blue, green, red = cv2.split(bgr.astype(np.float32))
         colour = (hue>88)&(hue<126)&(blue>1.30*red)&(blue>1.20*green)
         mask = (colour & (saturation>85) & (value>30) & (value<225) &
-                np.isfinite(depth) & (depth>.3) & (depth<7)).astype(np.uint8)
+                np.isfinite(depth) & (depth>.3) & (depth<self.max_depth-1)).astype(np.uint8)
         count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         choices = []
         for label in range(1, count):
@@ -81,7 +83,7 @@ class PersonDetector:
                 continue
             pixels = labels == label
             z = float(np.median(depth[pixels]))
-            dimension = max(w,h)*z/(bgr.shape[1]/2)
+            dimension = max(w,h)*z/(bgr.shape[1]/(2*math.tan(self.field_of_view/2)))
             if .35<dimension<.78:
                 score = .65+.15*min(1,area/90)+.1*max(0,1-abs(dimension-.48)/.5)
                 if x<4 or y<4 or x+w>bgr.shape[1]-4 or y+h>bgr.shape[0]-4:
@@ -138,15 +140,34 @@ class Track:
     latest_bbox: list | None = None
     latest_local: np.ndarray | None = None
     observation_pose: np.ndarray | None = None
+    local_last_seen: float | None = None
+    sources: set = field(default_factory=set)
+    group_origins: list = field(default_factory=list)
+    evidence: dict = field(default_factory=dict)
 
 
 class TrackManager:
-    def __init__(self, single_frame=False, independent_groups=True, score_min=.70, radius_95=.80):
+    def __init__(self, single_frame=False, independent_groups=True, score_min=.70, radius_95=.80,
+                 require_cross_source=False):
         self.tracks = []
         self.single_frame = single_frame
         self.independent_groups = independent_groups
         self.score_min=score_min
         self.radius_95=radius_95
+        self.require_cross_source=require_cross_source
+
+    @staticmethod
+    def independent_camera(track, xy, height, source):
+        if source=='rover' and track.sources<=set(['rover']):
+            return TrackManager.independent(track,xy)
+        origin=np.r_[xy,height]
+        vector=origin-np.r_[track.mean,0.]
+        for old in track.group_origins:
+            other=old-np.r_[track.mean,0.]
+            denominator=np.linalg.norm(vector)*np.linalg.norm(other)
+            angle=math.acos(np.clip(vector @ other/max(denominator,1e-9),-1,1))
+            if np.linalg.norm(origin-old)<=.50 or angle<=math.radians(12):return False
+        return True
 
     @staticmethod
     def independent(track, xy):
@@ -177,14 +198,22 @@ class TrackManager:
                     continue
                 track = Track(len(self.tracks)+1,detection["mean"].copy(),detection["cov"].copy())
                 self.tracks.append(track)
+            source=detection.get('source','rover')
+            observer=np.asarray(detection.get('observer_xy',pose[:2]))
+            observer_z=detection.get('observer_z',.30)
+            independent=self.independent_camera(track,observer,observer_z,source)
             track.mean,track.covariance = covariance_intersection(
                 track.mean,track.covariance,detection["mean"],detection["cov"])
             track.last_seen,track.latest_bbox = now,detection["bbox"]
             if detection.get("local_xy") is not None:
                 track.latest_local=np.asarray(detection["local_xy"]).copy()
                 track.observation_pose=pose.copy()
-            if detection["score"]>=self.score_min and (not self.independent_groups or self.independent(track,pose[:2])):
-                track.groups.append(pose[:2].copy())
+                track.local_last_seen=now
+            if detection.get('evidence'):track.evidence[source]=detection['evidence']
+            track.sources.add(source)
+            if detection["score"]>=self.score_min and (not self.independent_groups or independent):
+                track.groups.append(observer.copy())
+                track.group_origins.append(np.r_[observer,observer_z])
                 odds = 4*track.confidence/max(1e-6,1-track.confidence)
                 track.confidence = min(.999,odds/(1+odds))
 
@@ -193,7 +222,8 @@ class TrackManager:
         count = 1 if self.single_frame else 2
         threshold = .70 if self.single_frame else .90
         duplicate=any(t.reported and np.linalg.norm(t.mean-track.mean)<1.0 for t in self.tracks if t.id!=track.id)
-        return (not duplicate and not track.reported and len(track.groups)>=count and track.confidence>=threshold and
+        source_ok=not self.require_cross_source or {'rover','uav'}<=track.sources
+        return (source_ok and not duplicate and not track.reported and len(track.groups)>=count and track.confidence>=threshold and
                 (radius<=self.radius_95 or not covariance_gate))
 
 
