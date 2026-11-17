@@ -2,6 +2,8 @@
 
 本模块把两项研究原型接入当前仓库：有效人员报告导向的搜索/确认/投送滚动调度，以及定位不确定性约束的主动多视角确认。单车、LiDAR＋RGB-D、编码器/IMU、载荷2份等都是暂定研究条件。没有证明性能提升，也不宣称完成真实救援能力。
 
+D 场景扩展为单台无人车加一架 RGB-D 观测无人机，额外使用带噪 GPS 完成坐标对齐，并加入实体沟壑、密集植被和移动障碍。该扩展不改变原 A/B/C 单车实验条件；假设、融合边界和运行方式见 [COMPLEX_DISASTER_SCENE.md](COMPLEX_DISASTER_SCENE.md)。
+
 ## 启动
 
 已有双目纯视觉场景、控制器和start_rover_B.cmd继续作为原版演示。新模块使用独立ResearchRover、search_agent和mission_referee；原VisionRover保持两台RGB相机。A/B/C派生世界保留原地形、建筑、人物位置与外观，不把原来的方向扇区提示传入搜索控制器。
