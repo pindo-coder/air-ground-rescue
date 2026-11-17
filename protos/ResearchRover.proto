@@ -95,6 +95,8 @@ PROTO ResearchRover [
         noise .001
       }
       InertialUnit { name "attitude" noise .003 }
+      GPS { name "deployment_gps" accuracy .04 noiseCorrelation .2 }
+      Receiver { name "aerial_receiver" channel 17 bufferSize 65536 }
       HingeJoint {
         jointParameters HingeJointParameters { axis 0 1 0 anchor 0 0.205 0.09 dampingConstant 0.01 }
         device [ RotationalMotor { name "left_motor" maxVelocity 10 maxTorque 5 sound "" } PositionSensor { name "left_encoder" } ]

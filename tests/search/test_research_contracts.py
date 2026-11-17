@@ -24,7 +24,7 @@ from build_search_worlds import build
 class ResearchContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for case in ("A","B","C","smoke"):build(case)
+        for case in ("A","B","C","smoke","D"):build(case)
 
     def free_map(self):
         grid=OccupancyMap(side=20)
@@ -40,7 +40,7 @@ class ResearchContracts(unittest.TestCase):
 
     def test_public_configs_do_not_supply_people(self):
         files=list((ROOT/"config/search/public").glob("*.json"))
-        self.assertEqual(len(files),4)
+        self.assertEqual(len(files),5)
         for file in files:
             public=json.loads(file.read_text())
             self.assertFalse(public["target_positions_provided"])

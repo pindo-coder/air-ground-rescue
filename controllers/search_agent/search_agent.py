@@ -14,6 +14,7 @@ from mapping import LaserOdometry, OccupancyMap, local_control
 from perception import PersonDetector, TrackManager, project_depth
 from mapping import rotation
 from mission import METHODS, MissionScheduler, delivery_guidance
+from multiview import AerialInbox
 
 root=Path(__file__).resolve().parents[2]
 configuration=json.loads((root/"config/search/common.json").read_text(encoding="utf-8"))
@@ -29,15 +30,22 @@ out.mkdir(parents=True,exist_ok=True)
 os.environ.setdefault("YOLO_CONFIG_DIR",str(out/"yolo_config"))
 detector=PersonDetector(detector_mode,root,bias_std=configuration["position_bias_std_m"])
 odometry=LaserOdometry()
-grid=OccupancyMap()
 public_task=json.loads((root/"config/search/public"/f"{scenario}.json").read_text(encoding="utf-8"))
+grid=OccupancyMap(side=public_task.get('mapping_side_m',66))
+fusion_enabled=public_task.get('aerial_enabled',False) and os.environ.get('RESCUE_FUSION','on')=='on'
+receiver=gps=None
+inbox=None
+if public_task.get('aerial_enabled',False):
+    receiver=robot.getDevice('aerial_receiver');receiver.enable(period)
+    gps=robot.getDevice('deployment_gps');gps.enable(period)
 boundary=np.array([grid.cell(p)[::-1] for p in public_task["search_boundary_xy"]],np.int32)
 allowed=np.zeros(grid.logodds.shape,np.uint8)
 cv2.fillPoly(allowed,[boundary],1)
 grid.logodds[allowed==0]=4
 grid.seen[allowed==0]=True
 tracks=TrackManager(independent_groups=METHODS[method]["independent"],score_min=score_min,
-                    radius_95=configuration["report_radius_95_m"])
+                    radius_95=configuration["report_radius_95_m"],
+                    require_cross_source=fusion_enabled and public_task.get('require_cross_source_confirmation',False))
 scheduler=MissionScheduler(method,configuration["cargo_capacity"],configuration["distance_budget_m"])
 motors=[robot.getDevice(n) for n in ("left_motor","right_motor")]
 wheels=[robot.getDevice(n) for n in ("left_encoder","right_encoder")]
@@ -62,6 +70,8 @@ tick=0
 report_file=(out/"reports.jsonl").open("w",encoding="utf-8")
 log=(out/"state.jsonl").open("w",encoding="utf-8")
 detection_log=(out/"detections.jsonl").open("w",encoding="utf-8")
+frame_log=(out/'frames.jsonl').open('w',encoding='utf-8')
+fusion_log=(out/'fusion.jsonl').open('w',encoding='utf-8')
 print(f"[Search Agent] {method}; {detector_mode}; LiDAR + RGB-D; local frame starts at deployment.",flush=True)
 try:
     while robot.step(period)!=-1:
@@ -77,6 +87,17 @@ try:
         laser=np.column_stack((ranges*np.cos(angles),ranges*np.sin(angles)))
         roll,pitch,heading=imu.getRollPitchYaw()
         pose,pose_cov=odometry.update([sensor.getValue() for sensor in wheels],laser[ranges<7.9][::3],heading)
+        if receiver is not None:
+            if inbox is None and np.isfinite(gps.getValues()).all():
+                inbox=AerialInbox(gps.getValues(),odometry.initial_heading)
+            while receiver.getQueueLength():
+                text=receiver.getString();receiver.nextPacket()
+                if inbox is None:continue
+                remote=[d for d in inbox.ingest(text,now) if d['score']>=score_min]
+                if fusion_enabled and remote:
+                    prior=len(tracks.tracks)
+                    tracks.update(remote,pose,now)
+                    if len(tracks.tracks)>prior:scheduler.current=None
         scheduler.consume(pose,now-last_time);last_time=now
         depth=np.asarray(depth_camera.getRangeImage(),np.float32).reshape(height,width).copy()
         rgb=np.frombuffer(camera.getImage(),np.uint8).reshape(height,width,4)[:,:,:3].copy()
@@ -108,9 +129,13 @@ try:
                     grid.seen[c]=True
             grid.clearance=distance_transform_edt(grid.logodds<.7)*grid.resolution
             prior=len(tracks.tracks)
+            evidence=f'rover_{tick:06d}.jpg'
+            if detected:cv2.imwrite(str(out/evidence),rgb)
+            for detection in detected:
+                detection.update(source='rover',evidence=f'agent/{evidence}')
             tracks.update(detected,pose,now)
             detection_log.write(json.dumps(dict(t=now,candidates=[dict(xy=d["mean"].tolist(),
-                                      score=d["score"],depth=d["depth"]) for d in detected]))+"\n")
+                                      covariance=d['cov'].tolist(),score=d["score"],depth=d["depth"]) for d in detected]))+"\n")
             detection_log.flush()
             if len(tracks.tracks)>prior:
                 scheduler.current=None
@@ -124,6 +149,7 @@ try:
                     report=dict(type="report",track_id=track.id,timestamp_s=now,
                                 xy=track.mean.tolist(),covariance=track.covariance.tolist(),
                                 score=track.confidence,view_groups=len(track.groups),evidence=evidence)
+                    report.update(sources=sorted(track.sources),source_evidence=track.evidence.copy())
                     reports.append(report);events.append(report)
                     report_file.write(json.dumps(report)+"\n");report_file.flush()
                     scheduler.current=None
@@ -172,12 +198,22 @@ try:
         last_control=v,w
         payload=dict(run_id=run_id,scenario=scenario,method=method,detector=detector_mode,
                      pose_estimate=pose.tolist(),cargo=scheduler.cargo,events=events,mode=mode)
+        payload.update(fusion_enabled=fusion_enabled,aerial_packets=inbox.accepted if inbox else 0,
+                       rejected_aerial_packets=inbox.rejected if inbox else 0,
+                       cross_view_tracks=sum({'rover','uav'}<=t.sources for t in tracks.tracks))
         robot.setCustomData(json.dumps(payload))
         if tick%10==0:
             log.write(json.dumps(dict(t=now,pose=pose.tolist(),mode=mode,
                                       targets=len(tracks.tracks),reports=len(reports),cargo=scheduler.cargo,
                                       command=[v,w],goal=action["point"].tolist()))+"\n")
             log.flush()
+            fusion_log.write(json.dumps(dict(t=now,enabled=fusion_enabled,
+                accepted_packets=inbox.accepted if inbox else 0,rejected_packets=inbox.rejected if inbox else 0,
+                tracks=[dict(id=t.id,xy=t.mean.tolist(),covariance=t.covariance.tolist(),sources=sorted(t.sources),
+                             groups=len(t.groups),evidence=t.evidence) for t in tracks.tracks]))+'\n');fusion_log.flush()
+        if receiver is not None and tick%20==0:
+            frame_name=f'frame_{tick:06d}.jpg';cv2.imwrite(str(out/frame_name),rgb)
+            frame_log.write(json.dumps(dict(timestamp_s=now,evidence=f'agent/{frame_name}',pose=pose.tolist()))+'\n');frame_log.flush()
         if tick in (20,80):
             camera.saveImage(str(out/f"rgb_{int(now):02d}s.png"),100)
         if now>float(os.environ.get("RESCUE_DURATION",configuration["max_duration_s"]))+1:
@@ -186,4 +222,4 @@ finally:
     for motor in motors:motor.setVelocity(0.)
     grid.save(out)
     (out/"decisions.json").write_text(json.dumps(scheduler.decisions,indent=2),encoding="utf-8")
-    report_file.close();log.close();detection_log.close()
+    report_file.close();log.close();detection_log.close();frame_log.close();fusion_log.close()

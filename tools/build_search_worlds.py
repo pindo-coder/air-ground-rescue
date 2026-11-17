@@ -16,7 +16,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"evaluation"))
 from metrics import height_at,look_at_rotation
 
 ROOT=Path(__file__).resolve().parents[1]
-CASES={"A":"A", "B":"B", "C":"C", "smoke":"A"}
+CASES={"A":"A", "B":"B", "C":"C", "smoke":"A", "D":"B"}
 
 
 def replace_node(text, pattern, new):
@@ -71,6 +71,10 @@ DEF TEST_OBSTACLE Solid {{ name "test obstacle" translation 3 2 .25 children [ S
             node=node.replace('name "casualty"',f'name "search victim {index}"')
             scene+="\n"+node
             victims.append(dict(id=index,xy=xy))
+    complex_config=None
+    if case=="D":
+        from complex_disaster import add_complex_scene
+        scene,meta,victims,complex_config=add_complex_scene(scene,meta,height_at)
     sx,sy=meta["spawn"];yaw=meta["spawn_yaw"]
     # Read spawn elevation from the already committed height field.
     task=json.dumps(json.dumps(dict(search_case=case)))
@@ -89,6 +93,9 @@ DEF SEARCH_REFEREE Robot {{
     c,s=math.cos(yaw),math.sin(yaw)
     inverse=np.array([[c,s],[-s,c]])
     corners=((-5,-5),(10,-5),(10,8),(-5,8)) if case=="smoke" else ((-20.5,-14.5),(20.5,-14.5),(20.5,14.5),(-20.5,14.5))
+    if case=='D':
+        (xmin,ymin),(xmax,ymax)=meta['bounds_xy']
+        corners=((xmin,ymin),(xmax,ymin),(xmax,ymax),(xmin,ymax))
     boundary=[(inverse @ (np.array(xy)-[sx,sy])).tolist() for xy in corners]
     public=dict(search_case=case,search_boundary_xy=boundary,depot_xy=[0,0],
                 target_positions_provided=False,assumed_sensor_configuration=True,
@@ -97,6 +104,21 @@ DEF SEARCH_REFEREE Robot {{
                  spawn_yaw=yaw,duration_s=150 if case=="smoke" else 600,
                  report_tolerance_m=1.0,delivery_tolerance_m=1.8,
                  delivery_deadline_after_report_s=public["delivery_deadline_after_report_s"])
+    if complex_config is not None:
+        # Calibration only: flight routes and person placements stay with the scene.
+        public_aerial={key:complex_config['aerial'][key] for key in (
+            'radio_channel','camera_fov_rad','gps_std_m','attitude_std_rad','image_period_s','flight_model')}
+        public.update(aerial=public_aerial,aerial_enabled=True,
+                      require_cross_source_confirmation=False,
+                      mapping_side_m=2*math.ceil(np.max(np.abs(boundary))+2),
+                      features=dict(moving_obstacles=2,added_trees=complex_config['vegetation']['trees'],
+                                    total_trees=len(meta['forest']['trees']),sphere_shrubs=0,
+                                    textured_bushes=len(meta['forest']['bushes']),extent_m=complex_config['extent_m'],
+                                    excavated_gully=True,rough_terrain=True))
+        # The rover never loads these private coordinates/height values.
+        private.update(origin=meta['origin'],spacing=meta['spacing'],heights=meta['heights'],
+                       forest=meta['forest'],bounds_xy=meta['bounds_xy'],
+                       scenario_features='textured 3D forest and physical moving hazards')
     if case=="smoke":
         private.update(origin=meta["origin"],spacing=meta["spacing"],heights=meta["heights"],fixture="flat controlled pipeline test")
     for folder in ("config/search/public","evaluation/search"):

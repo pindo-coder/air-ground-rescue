@@ -1,0 +1,37 @@
+#VRML_SIM R2025a utf8
+# Kinematic observation platform; images and noisy pose come from real devices.
+PROTO ObserverDrone [
+  field SFVec3f translation -17 -9 9.5
+  field SFRotation rotation 0 0 1 0
+  field SFString controller "aerial_observer"
+] {
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    name "Aerial RGB-D observer"
+    controller IS controller
+    window "<none>"
+    children [
+      Shape { appearance PBRAppearance { baseColor .85 .19 .04 roughness .6 metalness .1 }
+              geometry Box { size .48 .30 .14 } }
+      Shape { appearance PBRAppearance { baseColor .09 .11 .12 roughness .6 }
+              geometry Box { size 1.10 .07 .055 } }
+      Shape { appearance PBRAppearance { baseColor .09 .11 .12 roughness .6 }
+              geometry Box { size .07 1.10 .055 } }
+      Pose { translation .50 0 .04 children [ Shape { appearance DEF ROTOR PBRAppearance { baseColor .07 .08 .08 transparency .15 roughness .5 } geometry Cylinder { radius .23 height .015 subdivision 16 } } ] }
+      Pose { translation -.50 0 .04 children [ Shape { appearance USE ROTOR geometry Cylinder { radius .23 height .015 subdivision 16 } } ] }
+      Pose { translation 0 .50 .04 children [ Shape { appearance USE ROTOR geometry Cylinder { radius .23 height .015 subdivision 16 } } ] }
+      Pose { translation 0 -.50 .04 children [ Shape { appearance USE ROTOR geometry Cylinder { radius .23 height .015 subdivision 16 } } ] }
+      Pose { translation 0 0 -.15 children [ Shape { appearance PBRAppearance { baseColor .03 .06 .08 roughness .5 } geometry Sphere { radius .085 subdivision 2 } } ] }
+      Camera { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_rgb"
+               width 640 height 480 fieldOfView 1.1 near .05 far 30 noise .003 }
+      RangeFinder { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_depth"
+                    width 640 height 480 fieldOfView 1.1 minRange .2 maxRange 24 noise .002 }
+      GPS { translation 0 0 -.20 name "aerial_gps" accuracy .04 noiseCorrelation .2 }
+      InertialUnit { name "aerial_attitude" noise .003 }
+      Emitter { name "aerial_radio" channel 17 range 100 }
+    ]
+    boundingObject Box { size 1.10 1.10 .25 }
+    # No Physics: path is prescribed by the environment controller.
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "status": "FINISHED",
+  "tree_count": 252,
+  "bush_count": 140,
+  "terrain_extent_m": [
+    84,
+    60
+  ],
+  "terrain_elevation_range_m": [
+    -0.34621,
+    7.03177
+  ],
+  "rover_height_m": 0.3,
+  "camera_size": [
+    320,
+    240
+  ],
+  "method": "identical static rover pose, noise disabled only in audit; remove and restore tree nodes",
+  "pixels_with_tree_in_front_fraction": 0.5854427083333333,
+  "central_view_blocked_fraction": 0.68046875,
+  "occlusion_pass": true,
+  "evaluation_only": true,
+  "not_a_navigation_or_detection_result": true
+}
