@@ -9,16 +9,19 @@ ROOT=Path(__file__).resolve().parents[1]
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser()
-    parser.add_argument("--cases",nargs="+",choices=("A","B","C","smoke"),default=["A","B","C"])
+    parser.add_argument("--cases",nargs="+",choices=("A","B","C","smoke","D"),default=["A","B","C"])
     parser.add_argument("--methods",nargs="+",choices=METHODS,default=["frontier","active_only","schedule_only","full","weighted"])
     parser.add_argument("--detector",choices=("yolo","surrogate_rgbd"),default="yolo")
     parser.add_argument("--duration",type=float,default=150)
+    parser.add_argument('--fusion',choices=('on','off'),default='on')
+    parser.add_argument('--dynamic',choices=('on','off'),default='on')
     args=parser.parse_args();records=[]
     for case in args.cases:
         for method in args.methods:
             try:
-                folder=run(case,method,args.detector,args.duration)
-                records.append(dict(case=case,method=method,run=folder.name,status="finished"))
+                folder=run(case,method,args.detector,args.duration,fusion=args.fusion,dynamic=args.dynamic)
+                records.append(dict(case=case,method=method,run=folder.name,status="finished",
+                                    fusion=args.fusion,dynamic=args.dynamic))
             except Exception as error:
                 records.append(dict(case=case,method=method,status="error",error=str(error)))
                 print("Recorded run failure:",error,flush=True)
