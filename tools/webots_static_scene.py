@@ -1,4 +1,4 @@
-"""Read and export the static nodes used by the repository's Webots B world."""
+"""Read and export the static nodes used by the repository's Webots worlds."""
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -14,7 +14,9 @@ import xml.etree.ElementTree as ET
 TOKEN = re.compile(r'#[^\n]*|"(?:\\.|[^"\\])*"|[{}\[\]]|[^\s,{}\[\]"#]+')
 NUMBER = re.compile(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?')
 IDENTITY = (0, 0, 0, 1)
+UNIT_SCALE = (1, 1, 1)
 GEOMETRIES = {"Box", "Cylinder", "Sphere", "IndexedFaceSet", "Mesh"}
+TREES = {"Pine", "Oak", "Sassafras", "Cypress"}
 
 
 @dataclass(eq=False)
@@ -120,17 +122,33 @@ class Parser:
         return nodes
 
 
-def read_pine(source):
+def read_proto(source):
     text = source.read_text(encoding="utf-8")
-    # Pine's template only makes its own boundingObject conditional. B supplies
-    # a separate trunk collider in each outer Solid.
-    interface_end = text.index("]", text.index("PROTO Pine"))
-    content = re.sub(r"%<.*?>%", "", text[interface_end + 1:], flags=re.S)
-    parser = Parser(content, source)
+    if source.stem in TREES:
+        # The outer Solid supplies the trunk collider in B and D. D uses unburnt Sassafras.
+        for condition in ("fields.enableBoundingObject.value", "fields.burnt.value"):
+            text = re.sub(r"%<\s*if\s*\(" + re.escape(condition) + r"\)\s*\{\s*>%.*?%<\s*\}\s*>%",
+                          "", text, flags=re.S)
+        triple = r"(?:%<=\s*fields\.scale\.value\s*>%\s*){3}"
+        text = re.sub(triple, "IS scale ", text)
+        text = re.sub(r"%<\s*(?:if\s*\(!fields\.burnt\.value\)\s*\{|\})\s*>%", "", text)
+    if "%<" in text:
+        raise ValueError(f"Unrecognized Webots template expression in {source.name}")
+    parser = Parser(text, source)
+    parser.take("PROTO")
+    parser.take(source.stem)
+    parser.take("[")
+    defaults = {}
+    while parser.peek() != "]":
+        parser.take("field")
+        parser.take()  # Webots field type
+        key = parser.take()
+        defaults[key] = parser.value()
+    parser.take("]")
     parser.take("{")
     result = parser.node()
     parser.take("}")
-    return result
+    return result, defaults
 
 
 def number_list(items):
@@ -177,7 +195,7 @@ def rotated(q, v):
 class Placement:
     xyz: tuple = (0, 0, 0)
     rotation: tuple = IDENTITY
-    scale: float = 1
+    scale: tuple = UNIT_SCALE
 
     def child(self, node, parameters=None):
         def get(key, default):
@@ -190,12 +208,18 @@ class Placement:
         x, y, z, angle = get("rotation", (0, 0, 1, 0))
         axis = unit((x, y, z)) if angle else (0, 0, 1)
         quat = (*[a * math.sin(angle / 2) for a in axis], math.cos(angle / 2))
-        scales = get("scale", (1, 1, 1))
-        if not (scales[0] == scales[1] == scales[2] and scales[0] > 0):
-            raise ValueError(f"Nonuniform or nonpositive scale on {node.kind} in {node.source.name}")
-        offset = rotated(self.rotation, tuple(value * self.scale for value in xyz))
+        scales = get("scale", UNIT_SCALE)
+        if isinstance(scales, (int, float)):
+            scales = (scales,) * 3
+        if min(scales) <= 0:
+            raise ValueError(f"Nonpositive scale on {node.kind} in {node.source.name}")
+        for i, (j, k) in enumerate(((1, 2), (2, 0), (0, 1))):
+            if self.scale[j] != self.scale[k] and abs(quat[i]) > 1e-10:
+                raise ValueError(f"Transform introduces shear on {node.kind} in {node.source.name}")
+        offset = rotated(self.rotation, tuple(value * scale for value, scale in zip(xyz, self.scale)))
+        combined_scale = tuple(a * b for a, b in zip(self.scale, scales))
         return Placement(tuple(a + b for a, b in zip(self.xyz, offset)),
-                         multiply(self.rotation, quat), self.scale * scales[0])
+                         multiply(self.rotation, quat), combined_scale)
 
     def write(self, node):
         element(node, "pose", number_list((*self.xyz, *self.rotation)), rotation_format="quat_xyzw")
@@ -345,7 +369,16 @@ class StaticScene:
         self.output = output
         self.assets = {}
         self.meshes = {}
-        self.pine = None
+        self.protos = {}
+
+    def proto_instance(self, node):
+        if node.kind not in self.protos:
+            self.protos[node.kind] = read_proto(self.project / "protos" / f"{node.kind}.proto")
+        body, defaults = self.protos[node.kind]
+        fields = {**defaults, **node.fields}
+        if node.kind == "Sassafras" and fields["burnt"]:
+            raise ValueError("Export supports the unburnt Sassafras template used in D")
+        return body, fields
 
     def asset(self, node, url):
         path = (node.source.parent / url).resolve()
@@ -377,6 +410,8 @@ class StaticScene:
         fields = appearance.fields
         rgb = fields.get("baseColor", (1, 1, 1))
         element(material, "diffuse", number_list((*rgb, 1)))
+        if "emissiveColor" in fields:
+            element(material, "emissive", number_list((*fields["emissiveColor"], 1)))
         metal = element(element(material, "pbr"), "metal")
         element(metal, "roughness", number_list((fields.get("roughness", 0),)))
         element(metal, "metalness", number_list((fields.get("metalness", 1),)))
@@ -393,12 +428,14 @@ class StaticScene:
         if node.kind in {"Box", "Cylinder", "Sphere"}:
             solid = element(geometry, node.kind.lower())
             if node.kind == "Box":
-                size = tuple(v * scale for v in node.fields.get("size", (2, 2, 2)))
+                size = tuple(v * s for v, s in zip(node.fields.get("size", (2, 2, 2)), scale))
                 element(solid, "size", number_list(size))
             else:
-                element(solid, "radius", number_list((node.fields.get("radius", 1) * scale,)))
+                if scale[0] != scale[1] or node.kind == "Sphere" and scale[0] != scale[2]:
+                    raise ValueError(f"Cannot preserve a noncircular {node.kind} primitive")
+                element(solid, "radius", number_list((node.fields.get("radius", 1) * scale[0],)))
                 if node.kind == "Cylinder":
-                    element(solid, "length", number_list((node.fields.get("height", 2) * scale,)))
+                    element(solid, "length", number_list((node.fields.get("height", 2) * scale[2],)))
             return
 
         if node.kind == "Mesh":
@@ -408,7 +445,7 @@ class StaticScene:
             key = node, transform
             if key not in self.meshes:
                 # The same original geometry object is reused for matching collision
-                # shapes and all Pine instances when the UV transform agrees.
+                # shapes and all forest instances when the UV transform agrees.
                 stem = (node.name or node.kind).lower()
                 path = Path("meshes") / f"{len(self.meshes):04d}_{stem}.obj"
                 (self.output / path).parent.mkdir(parents=True, exist_ok=True)
@@ -419,8 +456,8 @@ class StaticScene:
             raise ValueError(f"Unsupported geometry {node.kind} from {node.source.name}")
         mesh = element(geometry, "mesh")
         element(mesh, "uri", uri)
-        if scale != 1:
-            element(mesh, "scale", number_list((scale, scale, scale)))
+        if scale != UNIT_SCALE:
+            element(mesh, "scale", number_list(scale))
 
     def shapes(self, node, placement, collision=False, parameters=None):
         if node is None:
@@ -433,31 +470,19 @@ class StaticScene:
             if not collision:
                 raise ValueError(f"Expected Shape wrapper for {node.kind}")
             yield node, None, placement
-        elif node.kind == "Pine":
+        elif node.kind in TREES:
             if collision or node.fields.get("enableBoundingObject", True):
-                raise ValueError("B expects Pine instances with an explicit outer trunk collider")
-            if self.pine is None:
-                self.pine = read_pine(self.project / "protos/Pine.proto")
-            fields = {"translation": (0, 0, 0), "rotation": (0, 0, 1, 0),
-                      "scale": (1, 1, 1), **node.fields}
-            yield from self.shapes(self.pine, placement, parameters=fields)
+                raise ValueError(f"Expected {node.kind} with an explicit outer trunk collider")
+            body, fields = self.proto_instance(node)
+            yield from self.shapes(body, placement, parameters=fields)
         elif node.kind in {"Group", "Pose", "Transform", "Solid"}:
             relative = placement.child(node, parameters)
             for child in node.fields.get("children", []):
                 yield from self.shapes(child, relative, collision, parameters)
         else:
-            raise ValueError(f"Unsupported B scene node {node.kind} in {node.source.name}")
+            raise ValueError(f"Unsupported scene node {node.kind} in {node.source.name}")
 
-    def static_model(self, world, node):
-        if not node.name:
-            raise ValueError(f"Expected a DEF name for root {node.kind}")
-        model = element(world, "model", name=node.name.lower())
-        Placement().child(node).write(model)
-        element(model, "static", "true")
-        link = element(model, "link", name="body")
-        visual_roots = node.fields.get("children", []) if node.kind == "Solid" else [node]
-        visuals = chain.from_iterable(self.shapes(child, Placement()) for child in visual_roots)
-        collisions = self.shapes(node.fields.get("boundingObject"), Placement(), collision=True)
+    def write_parts(self, link, visuals, collisions, cast_shadows=True):
         for tag, shapes in (("visual", visuals), ("collision", collisions)):
             for index, (geometry, appearance, placement) in enumerate(shapes, 1):
                 name = f"{tag}_{index}_{(geometry.name or geometry.kind).lower()}"
@@ -466,5 +491,18 @@ class StaticScene:
                 self.geometry(item, geometry, placement.scale, appearance if tag == "visual" else None)
                 if tag == "visual":
                     self.material(item, appearance)
-                    if node.kind == "Shape":
+                    if not cast_shadows:
                         element(item, "cast_shadows", "false")
+
+    def static_model(self, world, node):
+        if not node.name:
+            raise ValueError(f"Expected a DEF name for root {node.kind}")
+        model = element(world, "model", name=node.name.lower())
+        body, params = self.proto_instance(node) if node.kind == "ForestBush" else (node, None)
+        Placement().child(body, params).write(model)
+        element(model, "static", "true")
+        link = element(model, "link", name="body")
+        visual_roots = body.fields.get("children", []) if body.kind == "Solid" else [body]
+        visuals = chain.from_iterable(self.shapes(child, Placement(), parameters=params) for child in visual_roots)
+        collisions = self.shapes(body.fields.get("boundingObject"), Placement(), collision=True, parameters=params)
+        self.write_parts(link, visuals, collisions, cast_shadows=body.kind != "Shape")

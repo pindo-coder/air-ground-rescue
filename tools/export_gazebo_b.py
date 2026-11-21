@@ -17,7 +17,7 @@ def terrain_grid(terrain):
     shape, = terrain.fields["children"]
     grid = shape.fields["geometry"]
     if grid.kind != "ElevationGrid":
-        raise ValueError("B terrain must contain an ElevationGrid")
+        raise ValueError("Terrain must contain an ElevationGrid")
     fields = grid.fields
     nx, ny = (int(fields[key]) for key in ("xDimension", "yDimension"))
     dx, dy = (fields[key] for key in ("xSpacing", "ySpacing"))
@@ -29,10 +29,20 @@ def terrain_grid(terrain):
     return nx, ny, dx, dy, heights
 
 
+def terrain_normal(grid, i, j):
+    nx, ny, dx, dy, heights = grid
+    south, north = max(0, j - 1), min(ny - 1, j + 1)
+    west, east = max(0, i - 1), min(nx - 1, i + 1)
+    dz_dx = (heights[j * nx + east] - heights[j * nx + west]) / ((east - west) * dx)
+    dz_dy = (heights[north * nx + i] - heights[south * nx + i]) / ((north - south) * dy)
+    length = math.hypot(dz_dx, dz_dy, 1)
+    return -dz_dx / length, -dz_dy / length, 1 / length
+
+
 def write_terrain_obj(path, grid):
     nx, ny, dx, dy, heights = grid
     with path.open("w", encoding="ascii", newline="\n") as mesh:
-        mesh.write("# Webots B ElevationGrid, in its original local coordinates\n")
+        mesh.write("# Webots ElevationGrid, in its original local coordinates\n")
         for j in range(ny):
             for i in range(nx):
                 mesh.write(f"v {number_list((i * dx, j * dy, heights[j * nx + i]))}\n")
@@ -41,13 +51,8 @@ def write_terrain_obj(path, grid):
                 # OBJ UV starts at the bottom left; the image top faces positive Y.
                 mesh.write(f"vt {number_list((i / (nx - 1), j / (ny - 1)))}\n")
         for j in range(ny):
-            south, north = max(0, j - 1), min(ny - 1, j + 1)
             for i in range(nx):
-                west, east = max(0, i - 1), min(nx - 1, i + 1)
-                dz_dx = (heights[j * nx + east] - heights[j * nx + west]) / ((east - west) * dx)
-                dz_dy = (heights[north * nx + i] - heights[south * nx + i]) / ((north - south) * dy)
-                length = math.hypot(dz_dx, dz_dy, 1)
-                mesh.write(f"vn {number_list((-dz_dx / length, -dz_dy / length, 1 / length))}\n")
+                mesh.write(f"vn {number_list(terrain_normal(grid, i, j))}\n")
         for j in range(ny - 1):
             for i in range(nx - 1):
                 sw = j * nx + i + 1  # OBJ indices start at one.
@@ -71,7 +76,7 @@ def add_terrain(world, terrain, exporter):
             exporter.material(item, shape.fields["appearance"])
 
 
-def add_overview_gui(world):
+def add_overview_gui(world, camera_pose=(0, 0, 53, 0, math.pi / 2, math.pi / 2)):
     gui = element(world, "gui")
     view = element(gui, "plugin", filename="MinimalScene", name="3D View")
     layout = element(view, "gz-gui")
@@ -80,7 +85,7 @@ def add_overview_gui(world):
     element(layout, "property", "docked", key="state", type="string")
     element(view, "engine", "ogre2")
     element(view, "scene", "scene")
-    element(view, "camera_pose", number_list((0, 0, 53, 0, math.pi / 2, math.pi / 2)))
+    element(view, "camera_pose", number_list(camera_pose))
 
     # Harmonic uses the SDF's GUI plugins in place of its default layout.
     for filename, name in (("GzSceneManager", "Scene Manager"),
@@ -106,6 +111,7 @@ def add_overview_gui(world):
     tree = element(gui, "plugin", filename="EntityTree", name="Entity tree")
     layout = element(tree, "gz-gui")
     element(layout, "property", "docked", key="state", type="string")
+    return gui
 
 
 def export(output):
