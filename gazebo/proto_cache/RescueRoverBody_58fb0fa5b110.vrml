@@ -1,0 +1,1517 @@
+#VRML_SIM R2025a utf8
+# tags: hidden
+# template language: javascript
+# Industrial-grade 4WD field-rescue UGV body (Clearpath/Scout aesthetic).
+# Sensor clearances strictly preserved: cameras at x=.260 z=.300, LiDAR plane at z=.370.
+EXTERNPROTO "BeveledBox.proto"
+
+PROTO RescueRoverBody [
+  field SFBool stereoOnly FALSE
+] {
+  
+  Group {
+    children [
+      # === 1. LOWER ARMORED CHASSIS TUB & SKID PLATES ===
+      # Core lower armored steel tub (recessed dark matte polymer/steel)
+      Pose {
+        translation 0 0 .122
+        children [
+          Shape {
+            appearance DEF MATTE_ARMOR PBRAppearance {
+              baseColor .085 .098 .110
+              roughness .74
+              metalness .22
+            }
+            geometry BeveledBox { size .445 .298 .064 bevel .012 }
+          }
+        ]
+      }
+      # Mid structural gunmetal hull (brushed dark titanium aluminum)
+      Pose {
+        translation 0 0 .172
+        children [
+          Shape {
+            appearance DEF GUNMETAL PBRAppearance {
+              baseColor .65 .68 .71
+              baseColorMap ImageTexture { url [ "textures/brushed_metal_base.png" ] }
+              normalMap ImageTexture { url [ "textures/brushed_metal_normal.png" ] }
+              normalMapFactor 0.22
+              textureTransform TextureTransform { scale 4 3 }
+              roughness .36
+              metalness .78
+            }
+            geometry BeveledBox { size .478 .322 .062 bevel .010 }
+          }
+        ]
+      }
+      # Upper chamfered armor deck shroud (tactical slate grey)
+      Pose {
+        translation -.004 0 .208
+        children [
+          Shape {
+            appearance DEF TACTICAL_SLATE PBRAppearance {
+              baseColor .22 .25 .28
+              roughness .56
+              metalness .32
+            }
+            geometry BeveledBox { size .456 .306 .028 bevel .008 }
+          }
+        ]
+      }
+      # Top 3K twill carbon-fiber equipment deck plate
+      Pose {
+        translation -.006 0 .224
+        children [
+          Shape {
+            appearance DEF CARBON_DECK PBRAppearance {
+              baseColorMap ImageTexture { url [ "textures/carbon_weave_base.png" ] }
+              normalMap ImageTexture { url [ "textures/carbon_weave_normal.png" ] }
+              normalMapFactor 0.32
+              textureTransform TextureTransform { scale 8 6 }
+              roughness .44
+              metalness .20
+            }
+            geometry BeveledBox { size .416 .274 .010 bevel .003 }
+          }
+        ]
+      }
+      # Deck perimeter stainless hex bolts (8 fasteners)
+      
+        Pose {
+          translation -0.185 -0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.185 0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.055 -0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.055 0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0.065 -0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0.065 0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0.175 -0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0.175 0.12 .230
+          children [
+            Shape {
+              appearance DEF STAINLESS PBRAppearance { baseColor .76 .80 .82 roughness .26 metalness .90 }
+              geometry Cylinder { radius .0036 height .0025 subdivision 6 }
+            }
+          ]
+        }
+      
+
+      # Front and rear angled aluminum bash skid plates
+      
+        Pose {
+          translation 0.234 0 .112
+          rotation 0 1 0 -0.58
+          children [
+            Shape {
+              appearance DEF RAW_ALU PBRAppearance { baseColor .54 .58 .60 roughness .34 metalness .82 }
+              geometry BeveledBox { size .048 .224 .007 bevel .002 }
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.234 0 .112
+          rotation 0 1 0 0.58
+          children [
+            Shape {
+              appearance DEF RAW_ALU PBRAppearance { baseColor .54 .58 .60 roughness .34 metalness .82 }
+              geometry BeveledBox { size .048 .224 .007 bevel .002 }
+            }
+          ]
+        }
+      
+
+      # === 2. SIDE T-SLOT ACCESSORY RAILS, COOLING GRILLES & RESCUE ACCENTS ===
+      
+        # Heavy anodized side frame rail + subtle rescue-orange trim channel
+        Pose {
+          translation 0 -0.164 .191
+          children [
+            Shape {
+              appearance USE MATTE_ARMOR
+              geometry BeveledBox { size .438 .010 .022 bevel .002 }
+            }
+            Pose {
+              translation 0 -0.0055 0
+              children [
+                Shape {
+                  appearance DEF RESCUE_ORANGE PBRAppearance {
+                    baseColor .86 .25 .06
+                    roughness .40
+                    metalness .25
+                  }
+                  geometry Box { size .412 .0025 .0075 }
+                }
+              ]
+            }
+          ]
+        }
+        # Center side radiator intake grille between wheels
+        Pose {
+          translation 0 -0.162 .156
+          children [
+            Shape {
+              appearance USE MATTE_ARMOR
+              geometry BeveledBox { size .096 .008 .042 bevel .002 }
+            }
+            
+              Pose {
+                translation -0.032 -0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation -0.016 -0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0 -0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0.016 -0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0.032 -0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+          ]
+        }
+
+        # === 3. EXPOSED SUSPENSION A-ARMS, SHOCK STRUTS & ANGULAR FENDERS ===
+        
+          # Wheel hub drive motor housing
+          Pose {
+            translation -0.15 -0.164 .090
+            rotation 1 0 0 1.5707963268
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .027 height .040 subdivision 24 } }
+            ]
+          }
+          # Angled coil-over shock absorber strut (silver shaft + orange spring body)
+          Pose {
+            translation -0.15 -0.162 .134
+            rotation 1 0 0 0.34
+            children [
+              Shape { appearance USE STAINLESS geometry Cylinder { radius .0045 height .076 subdivision 12 } }
+              Pose {
+                translation 0 0 .010
+                children [
+                  Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0095 height .034 subdivision 16 } }
+                ]
+              }
+            ]
+          }
+          # Lower wishbone linkage arm
+          Pose {
+            translation -0.15 -0.152 .096
+            rotation 1 0 0 -1.45
+            children [
+              Shape { appearance USE RAW_ALU geometry Box { size .024 .010 .054 } }
+            ]
+          }
+          # Crisp angular bent-steel off-road wheel fender (5 facets)
+          Pose {
+            translation -0.15 -0.198 .092
+            children [
+              
+                Pose {
+                  translation -0.092 0 0.073
+                  rotation 0 1 0 -1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.059 0 0.10200000000000001
+                  rotation 0 1 0 -0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0 0 0.112
+                  rotation 0 1 0 0
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.076 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.059 0 0.10200000000000001
+                  rotation 0 1 0 0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.092 0 0.073
+                  rotation 0 1 0 1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+              # Twin aluminum fender mounting brackets
+              
+                Pose {
+                  translation -0.032 0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.032 0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+            ]
+          }
+        
+          # Wheel hub drive motor housing
+          Pose {
+            translation 0.15 -0.164 .090
+            rotation 1 0 0 1.5707963268
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .027 height .040 subdivision 24 } }
+            ]
+          }
+          # Angled coil-over shock absorber strut (silver shaft + orange spring body)
+          Pose {
+            translation 0.15 -0.162 .134
+            rotation 1 0 0 0.34
+            children [
+              Shape { appearance USE STAINLESS geometry Cylinder { radius .0045 height .076 subdivision 12 } }
+              Pose {
+                translation 0 0 .010
+                children [
+                  Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0095 height .034 subdivision 16 } }
+                ]
+              }
+            ]
+          }
+          # Lower wishbone linkage arm
+          Pose {
+            translation 0.15 -0.152 .096
+            rotation 1 0 0 -1.45
+            children [
+              Shape { appearance USE RAW_ALU geometry Box { size .024 .010 .054 } }
+            ]
+          }
+          # Crisp angular bent-steel off-road wheel fender (5 facets)
+          Pose {
+            translation 0.15 -0.198 .092
+            children [
+              
+                Pose {
+                  translation -0.092 0 0.073
+                  rotation 0 1 0 -1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.059 0 0.10200000000000001
+                  rotation 0 1 0 -0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0 0 0.112
+                  rotation 0 1 0 0
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.076 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.059 0 0.10200000000000001
+                  rotation 0 1 0 0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.092 0 0.073
+                  rotation 0 1 0 1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+              # Twin aluminum fender mounting brackets
+              
+                Pose {
+                  translation -0.032 0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.032 0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+            ]
+          }
+        
+      
+        # Heavy anodized side frame rail + subtle rescue-orange trim channel
+        Pose {
+          translation 0 0.164 .191
+          children [
+            Shape {
+              appearance USE MATTE_ARMOR
+              geometry BeveledBox { size .438 .010 .022 bevel .002 }
+            }
+            Pose {
+              translation 0 0.0055 0
+              children [
+                Shape {
+                  appearance DEF RESCUE_ORANGE PBRAppearance {
+                    baseColor .86 .25 .06
+                    roughness .40
+                    metalness .25
+                  }
+                  geometry Box { size .412 .0025 .0075 }
+                }
+              ]
+            }
+          ]
+        }
+        # Center side radiator intake grille between wheels
+        Pose {
+          translation 0 0.162 .156
+          children [
+            Shape {
+              appearance USE MATTE_ARMOR
+              geometry BeveledBox { size .096 .008 .042 bevel .002 }
+            }
+            
+              Pose {
+                translation -0.032 0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation -0.016 0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0 0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0.016 0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+              Pose {
+                translation 0.032 0.0042 0
+                rotation 0 1 0 -.26
+                children [
+                  Shape { appearance USE RAW_ALU geometry Box { size .0035 .002 .028 } }
+                ]
+              }
+            
+          ]
+        }
+
+        # === 3. EXPOSED SUSPENSION A-ARMS, SHOCK STRUTS & ANGULAR FENDERS ===
+        
+          # Wheel hub drive motor housing
+          Pose {
+            translation -0.15 0.164 .090
+            rotation 1 0 0 1.5707963268
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .027 height .040 subdivision 24 } }
+            ]
+          }
+          # Angled coil-over shock absorber strut (silver shaft + orange spring body)
+          Pose {
+            translation -0.15 0.162 .134
+            rotation 1 0 0 -0.34
+            children [
+              Shape { appearance USE STAINLESS geometry Cylinder { radius .0045 height .076 subdivision 12 } }
+              Pose {
+                translation 0 0 .010
+                children [
+                  Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0095 height .034 subdivision 16 } }
+                ]
+              }
+            ]
+          }
+          # Lower wishbone linkage arm
+          Pose {
+            translation -0.15 0.152 .096
+            rotation 1 0 0 1.45
+            children [
+              Shape { appearance USE RAW_ALU geometry Box { size .024 .010 .054 } }
+            ]
+          }
+          # Crisp angular bent-steel off-road wheel fender (5 facets)
+          Pose {
+            translation -0.15 0.198 .092
+            children [
+              
+                Pose {
+                  translation -0.092 0 0.073
+                  rotation 0 1 0 -1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.059 0 0.10200000000000001
+                  rotation 0 1 0 -0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0 0 0.112
+                  rotation 0 1 0 0
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.076 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.059 0 0.10200000000000001
+                  rotation 0 1 0 0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.092 0 0.073
+                  rotation 0 1 0 1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+              # Twin aluminum fender mounting brackets
+              
+                Pose {
+                  translation -0.032 -0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.032 -0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+            ]
+          }
+        
+          # Wheel hub drive motor housing
+          Pose {
+            translation 0.15 0.164 .090
+            rotation 1 0 0 1.5707963268
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .027 height .040 subdivision 24 } }
+            ]
+          }
+          # Angled coil-over shock absorber strut (silver shaft + orange spring body)
+          Pose {
+            translation 0.15 0.162 .134
+            rotation 1 0 0 -0.34
+            children [
+              Shape { appearance USE STAINLESS geometry Cylinder { radius .0045 height .076 subdivision 12 } }
+              Pose {
+                translation 0 0 .010
+                children [
+                  Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0095 height .034 subdivision 16 } }
+                ]
+              }
+            ]
+          }
+          # Lower wishbone linkage arm
+          Pose {
+            translation 0.15 0.152 .096
+            rotation 1 0 0 1.45
+            children [
+              Shape { appearance USE RAW_ALU geometry Box { size .024 .010 .054 } }
+            ]
+          }
+          # Crisp angular bent-steel off-road wheel fender (5 facets)
+          Pose {
+            translation 0.15 0.198 .092
+            children [
+              
+                Pose {
+                  translation -0.092 0 0.073
+                  rotation 0 1 0 -1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.059 0 0.10200000000000001
+                  rotation 0 1 0 -0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0 0 0.112
+                  rotation 0 1 0 0
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.076 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.059 0 0.10200000000000001
+                  rotation 0 1 0 0.410127340541491
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.05415974481593781 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.092 0 0.073
+                  rotation 0 1 0 1.0863183977578736
+                  children [
+                    Shape {
+                      appearance USE MATTE_ARMOR
+                      geometry BeveledBox { size 0.04694182110716777 .076 .0065 bevel .0015 }
+                    }
+                  ]
+                }
+              
+              # Twin aluminum fender mounting brackets
+              
+                Pose {
+                  translation -0.032 -0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.032 -0.028 .110
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Box { size .010 .024 .007 } }
+                  ]
+                }
+              
+            ]
+          }
+        
+      
+
+      # === 4. TUBULAR STEEL BRUSH-GUARD BUMPERS, WORK LEDS & TOW SHACKLES ===
+      
+        # Lower armored bumper block (kept strictly x <= .262, z <= .180)
+        Pose {
+          translation 0.246 0 .142
+          children [
+            Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .026 .274 .044 bevel .006 } }
+          ]
+        }
+        # Tubular steel brush-guard bar + outer uprights (clear of LED pods)
+        Pose {
+          translation 0.26 0 .168
+          rotation 1 0 0 1.5707963268
+          children [
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .0085 height .268 subdivision 16 } }
+          ]
+        }
+        
+          Pose {
+            translation 0.256 -0.126 .149
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .007 height .038 subdivision 12 } }
+            ]
+          }
+          Pose {
+            translation 0.26 -0.13356 .168
+            children [
+              Shape { appearance USE GUNMETAL geometry Sphere { radius .0085 subdivision 2 } }
+            ]
+          }
+        
+          Pose {
+            translation 0.256 0.126 .149
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .007 height .038 subdivision 12 } }
+            ]
+          }
+          Pose {
+            translation 0.26 0.13356 .168
+            children [
+              Shape { appearance USE GUNMETAL geometry Sphere { radius .0085 subdivision 2 } }
+            ]
+          }
+        
+        # CNC Rescue-Orange Tow Shackle (front & rear recovery hook)
+        Pose {
+          translation 0.259 0 .129
+          children [
+            Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .018 .066 .011 bevel .0025 } }
+            
+              Pose {
+                translation -0.005 -0.027 .008
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .010 .020 } } ]
+              }
+            
+              Pose {
+                translation -0.005 0.027 .008
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .010 .020 } } ]
+              }
+            
+          ]
+        }
+        # Recessed tactical LED work-light pods (front crisp white / rear ruby red)
+        
+          Pose {
+            translation 0.255 -0.092 .146
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .010 .056 .020 bevel .002 } }
+              
+                Pose {
+                  translation 0.0055 -0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.0055 0 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.0055 0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+            ]
+          }
+        
+          Pose {
+            translation 0.255 0.092 .146
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .010 .056 .020 bevel .002 } }
+              
+                Pose {
+                  translation 0.0055 -0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.0055 0 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation 0.0055 0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .92 .96 1.0
+                        emissiveColor .78 .88 1.0
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+            ]
+          }
+        
+      
+        # Lower armored bumper block (kept strictly x <= .262, z <= .180)
+        Pose {
+          translation -0.246 0 .142
+          children [
+            Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .026 .274 .044 bevel .006 } }
+          ]
+        }
+        # Tubular steel brush-guard bar + outer uprights (clear of LED pods)
+        Pose {
+          translation -0.26 0 .168
+          rotation 1 0 0 1.5707963268
+          children [
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .0085 height .268 subdivision 16 } }
+          ]
+        }
+        
+          Pose {
+            translation -0.256 -0.126 .149
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .007 height .038 subdivision 12 } }
+            ]
+          }
+          Pose {
+            translation -0.26 -0.13356 .168
+            children [
+              Shape { appearance USE GUNMETAL geometry Sphere { radius .0085 subdivision 2 } }
+            ]
+          }
+        
+          Pose {
+            translation -0.256 0.126 .149
+            children [
+              Shape { appearance USE GUNMETAL geometry Cylinder { radius .007 height .038 subdivision 12 } }
+            ]
+          }
+          Pose {
+            translation -0.26 0.13356 .168
+            children [
+              Shape { appearance USE GUNMETAL geometry Sphere { radius .0085 subdivision 2 } }
+            ]
+          }
+        
+        # CNC Rescue-Orange Tow Shackle (front & rear recovery hook)
+        Pose {
+          translation -0.259 0 .129
+          children [
+            Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .018 .066 .011 bevel .0025 } }
+            
+              Pose {
+                translation 0.005 -0.027 .008
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .010 .020 } } ]
+              }
+            
+              Pose {
+                translation 0.005 0.027 .008
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .010 .020 } } ]
+              }
+            
+          ]
+        }
+        # Recessed tactical LED work-light pods (front crisp white / rear ruby red)
+        
+          Pose {
+            translation -0.255 -0.092 .146
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .010 .056 .020 bevel .002 } }
+              
+                Pose {
+                  translation -0.0055 -0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.0055 0 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.0055 0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+            ]
+          }
+        
+          Pose {
+            translation -0.255 0.092 .146
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .010 .056 .020 bevel .002 } }
+              
+                Pose {
+                  translation -0.0055 -0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.0055 0 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+                Pose {
+                  translation -0.0055 0.016 0
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor .72 .06 .03
+                        emissiveColor .68 .06 .02
+                        emissiveIntensity .85
+                        roughness .18
+                        metalness 0
+                      }
+                      geometry Box { size .002 .011 .010 }
+                    }
+                  ]
+                }
+              
+            ]
+          }
+        
+      
+
+      # === 5. RUGGED PELICAN-STYLE RESCUE SUPPLY CASE (REAR DECK) ===
+      Pose {
+        translation -.112 0 .229
+        children [
+          # Lower molded tactical case body (flush from z=0 to z=.054)
+          Pose {
+            translation 0 0 .027
+            children [
+              Shape {
+                appearance USE TACTICAL_SLATE
+                geometry BeveledBox { size .168 .202 .054 bevel .007 }
+              }
+            ]
+          }
+          # Structural reinforcement ribs on rear and side case walls
+          
+            Pose {
+              translation -.085 -0.064 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .005 .013 .046 } } ]
+            }
+          
+            Pose {
+              translation -.085 0 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .005 .013 .046 } } ]
+            }
+          
+            Pose {
+              translation -.085 0.064 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .005 .013 .046 } } ]
+            }
+          
+          
+            Pose {
+              translation -0.044 -0.102 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .013 .005 .046 } } ]
+            }
+          
+            Pose {
+              translation 0.044 -0.102 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .013 .005 .046 } } ]
+            }
+          
+            Pose {
+              translation -0.044 0.102 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .013 .005 .046 } } ]
+            }
+          
+            Pose {
+              translation 0.044 0.102 .027
+              children [ Shape { appearance USE MATTE_ARMOR geometry Box { size .013 .005 .046 } } ]
+            }
+          
+          # Waterproof rubber gasket seam (flush at z=.054..060)
+          Pose {
+            translation 0 0 .056
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .172 .206 .007 bevel .0015 } }
+            ]
+          }
+          # Ribbed hard-case lid (flush at z=.059..077)
+          Pose {
+            translation 0 0 .068
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .170 .204 .018 bevel .005 } }
+            ]
+          }
+          # High-res tactical stencil plate on lid (right-side-up readable from rear/side, z_world=.307)
+          Shape {
+            appearance PBRAppearance {
+              baseColorMap ImageTexture { url [ "textures/rescue_rover_id.png" ] }
+              roughness .46
+              metalness .12
+            }
+            geometry IndexedFaceSet {
+              coord Coordinate {
+                point [ -.068 -.086 .0778, .068 -.086 .0778, .068 .086 .0778, -.068 .086 .0778 ]
+              }
+              coordIndex [ 0 1 2 3 -1 ]
+              texCoord TextureCoordinate { point [ 0 0, 1 0, 1 1, 0 1 ] }
+            }
+          }
+          # Twin heavy-duty rescue-orange cam latches bridging lid and body
+          
+            Pose {
+              translation -.087 -0.056 .050
+              children [
+                Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .010 .019 .036 bevel .002 } }
+              ]
+            }
+          
+            Pose {
+              translation -.087 0.056 .050
+              children [
+                Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .010 .019 .036 bevel .002 } }
+              ]
+            }
+          
+          # Folding steel carry handle on rear of case
+          Pose {
+            translation -.091 0 .030
+            children [
+              Shape { appearance USE RAW_ALU geometry BeveledBox { size .011 .064 .009 bevel .002 } }
+            ]
+          }
+        ]
+      }
+
+      # === 6. FIELD COMMS & SAFETY HARDWARE (ALL STRICTLY z <= .322, CLEAR OF LIDAR & CASE) ===
+      # Low-profile RTK GNSS puck on rear-right aluminum standoff (z_top = .304)
+      Pose {
+        translation -.208 -.116 .256
+        children [
+          Shape { appearance USE RAW_ALU geometry Cylinder { radius .006 height .056 subdivision 12 } }
+          Pose {
+            translation 0 0 .034
+            children [
+              Shape { appearance USE TACTICAL_SLATE geometry Cylinder { radius .024 height .015 subdivision 24 } }
+              Pose {
+                translation 0 0 .0085
+                children [
+                  Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .018 height .0025 subdivision 24 } }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+      # Emergency E-Stop mushroom button on rear-left deck corner
+      Pose {
+        translation -.206 .116 .236
+        children [
+          Shape { appearance PBRAppearance { baseColor .88 .72 .08 roughness .45 metalness .1 }
+                  geometry BeveledBox { size .028 .028 .014 bevel .002 } }
+          Pose {
+            translation 0 0 .013
+            children [
+              Shape { appearance PBRAppearance { baseColor .82 .08 .06 roughness .35 metalness .05 }
+                      geometry Cylinder { radius .0105 height .012 subdivision 18 } }
+            ]
+          }
+        ]
+      }
+      # Compact stubby UHF telemetry SMA antenna on front-left of rear deck (z_top = .316, clear of case & LiDAR)
+      Pose {
+        translation -.216 .082 .270
+        children [
+          Shape { appearance USE STAINLESS geometry Cylinder { radius .0048 height .014 subdivision 10 } }
+          Pose {
+            translation 0 0 .025
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry Cylinder { radius .0042 height .044 subdivision 12 } }
+            ]
+          }
+        ]
+      }
+
+      # === 7. PRECISION MULTI-LAYER LIDAR TURRET (OUSTER/VELODYNE STYLE, z_top = .346 < .370) ===
+      
+        Pose {
+          translation 0 0 .230
+          children [
+            # CNC chamfered base flange with 4 corner mounting bolts
+            Shape { appearance USE GUNMETAL geometry BeveledBox { size .112 .112 .012 bevel .003 } }
+            
+              Pose {
+                translation -0.044 -0.044 .007
+                children [ Shape { appearance USE STAINLESS geometry Cylinder { radius .0035 height .003 subdivision 6 } } ]
+              }
+            
+              Pose {
+                translation -0.044 0.044 .007
+                children [ Shape { appearance USE STAINLESS geometry Cylinder { radius .0035 height .003 subdivision 6 } } ]
+              }
+            
+              Pose {
+                translation 0.044 -0.044 .007
+                children [ Shape { appearance USE STAINLESS geometry Cylinder { radius .0035 height .003 subdivision 6 } } ]
+              }
+            
+              Pose {
+                translation 0.044 0.044 .007
+                children [ Shape { appearance USE STAINLESS geometry Cylinder { radius .0035 height .003 subdivision 6 } } ]
+              }
+            
+            # Machined tubular riser stanchion (4 corner struts around core)
+            Pose {
+              translation 0 0 .038
+              children [
+                Shape { appearance USE MATTE_ARMOR geometry Cylinder { radius .036 height .056 subdivision 28 } }
+                
+                  Pose {
+                    translation 0.028284271247461905 0.028284271247461898 0
+                    children [
+                      Shape { appearance USE RAW_ALU geometry Cylinder { radius .005 height .058 subdivision 10 } }
+                    ]
+                  }
+                
+                  Pose {
+                    translation -0.028284271247461898 0.028284271247461905 0
+                    children [
+                      Shape { appearance USE RAW_ALU geometry Cylinder { radius .005 height .058 subdivision 10 } }
+                    ]
+                  }
+                
+                  Pose {
+                    translation -0.02828427124746191 -0.028284271247461898 0
+                    children [
+                      Shape { appearance USE RAW_ALU geometry Cylinder { radius .005 height .058 subdivision 10 } }
+                    ]
+                  }
+                
+                  Pose {
+                    translation 0.028284271247461894 -0.02828427124746191 0
+                    children [
+                      Shape { appearance USE RAW_ALU geometry Cylinder { radius .005 height .058 subdivision 10 } }
+                    ]
+                  }
+                
+              ]
+            }
+            # LiDAR lower heatsink collar (z_world = .300)
+            Pose {
+              translation 0 0 .072
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .044 height .014 subdivision 36 } }
+              ]
+            }
+            # Glossy dark optical laser window ring (z_world = .320)
+            Pose {
+              translation 0 0 .092
+              children [
+                Shape {
+                  appearance DEF OPTICAL_GLASS PBRAppearance {
+                    baseColor .02 .04 .06
+                    roughness .06
+                    metalness .32
+                  }
+                  geometry Cylinder { radius .042 height .028 subdivision 40 }
+                }
+              ]
+            }
+            # Finned dark-titanium top heatsink cap (z_world_top = .345, safely < .370 scan plane)
+            Pose {
+              translation 0 0 .110
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .044 height .010 subdivision 36 } }
+                Pose {
+                  translation 0 0 .0055
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .018 height .002 subdivision 24 } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      
+
+      # === 8. CNC TWIN-STANCHION RGB-D / STEREO SENSOR BAR (STRICTLY x <= .254, z <= .324) ===
+      Pose {
+        translation .184 0 .230
+        children [
+          # Base rail mount
+          Shape { appearance USE GUNMETAL geometry BeveledBox { size .064 .148 .010 bevel .002 } }
+          # Twin angled CNC stanchion brackets
+          
+            Pose {
+              translation .016 -0.056 .034
+              rotation 0 1 0 .34
+              children [
+                Shape { appearance USE RAW_ALU geometry BeveledBox { size .024 .014 .062 bevel .003 } }
+              ]
+            }
+          
+            Pose {
+              translation .016 0.056 .034
+              rotation 0 1 0 .34
+              children [
+                Shape { appearance USE RAW_ALU geometry BeveledBox { size .024 .014 .062 bevel .003 } }
+              ]
+            }
+          
+        ]
+      }
+      # Sleek CNC-machined sensor bar housing (front face at x = .222 + .027 = .249 < .260)
+      Pose {
+        translation .222 0 .298
+        rotation 0 1 0 .08
+        children [
+          Shape {
+            appearance USE GUNMETAL
+            geometry BeveledBox { size .054 .210 .044 bevel .007 }
+          }
+          # Upper CNC glare visor hood (strictly x_max <= .254, z_max <= .324)
+          Pose {
+            translation .004 0 .023
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry BeveledBox { size .058 .212 .005 bevel .0015 } }
+            ]
+          }
+          # Recessed dark front optical faceplate
+          Pose {
+            translation .0265 0 0
+            children [
+              Shape { appearance USE MATTE_ARMOR geometry Box { size .003 .192 .030 } }
+            ]
+          }
+          # Green power/sync status LED on sensor bar
+          Pose {
+            translation .0285 -.086 .010
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor .1 .95 .4 emissiveColor .1 .95 .4 emissiveIntensity .9 roughness .2 metalness 0 }
+                geometry Sphere { radius .0026 subdivision 1 }
+              }
+            ]
+          }
+          # Multi-coated optical lenses with machined aluminum bezels
+          
+            Pose {
+              translation .028 -0.07 0
+              rotation 0 1 0 1.5707963268
+              children [
+                Shape {
+                  appearance USE RAW_ALU
+                  geometry Cylinder { radius 0.017 height .005 subdivision 28 }
+                }
+                Pose {
+                  translation 0 0 .0025
+                  children [
+                    Shape {
+                      appearance USE OPTICAL_GLASS
+                      geometry Cylinder { radius 0.013 height .003 subdivision 28 }
+                    }
+                  ]
+                }
+              ]
+            }
+          
+            Pose {
+              translation .028 0 0
+              rotation 0 1 0 1.5707963268
+              children [
+                Shape {
+                  appearance USE RAW_ALU
+                  geometry Cylinder { radius 0.014 height .005 subdivision 28 }
+                }
+                Pose {
+                  translation 0 0 .0025
+                  children [
+                    Shape {
+                      appearance USE OPTICAL_GLASS
+                      geometry Cylinder { radius 0.0105 height .003 subdivision 28 }
+                    }
+                  ]
+                }
+              ]
+            }
+          
+            Pose {
+              translation .028 0.07 0
+              rotation 0 1 0 1.5707963268
+              children [
+                Shape {
+                  appearance USE RAW_ALU
+                  geometry Cylinder { radius 0.017 height .005 subdivision 28 }
+                }
+                Pose {
+                  translation 0 0 .0025
+                  children [
+                    Shape {
+                      appearance USE OPTICAL_GLASS
+                      geometry Cylinder { radius 0.013 height .003 subdivision 28 }
+                    }
+                  ]
+                }
+              ]
+            }
+          
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,1473 @@
+#VRML_SIM R2025a utf8
+# template language: javascript
+# Industrial-grade kinematic survey quadrotor (Matrice-class aesthetic) with nadir RGB-D payload.
+# All sensor poses, names, FOVs and downward optical clearance (z = -.20) strictly preserved.
+EXTERNPROTO "BeveledBox.proto"
+
+PROTO ObserverDrone [
+  field SFVec3f translation -17 -9 9.5
+  field SFRotation rotation 0 0 1 0
+  field SFString controller "aerial_observer"
+] {
+  
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    name "Aerial RGB-D observer"
+    controller IS controller
+    window "<none>"
+    children [
+      # === 1. SLEEK LOW-PROFILE 3K CARBON & TITANIUM CENTER AIRFRAME ===
+      # Lower structural carbon-fiber chassis plate
+      Pose {
+        translation 0 0 -.024
+        children [
+          Shape {
+            appearance DEF CARBON_FRAME PBRAppearance {
+              baseColorMap ImageTexture { url [ "textures/carbon_weave_base.png" ] }
+              normalMap ImageTexture { url [ "textures/carbon_weave_normal.png" ] }
+              normalMapFactor 0.35
+              textureTransform TextureTransform { scale 7 5 }
+              roughness .44
+              metalness .20
+            }
+            geometry BeveledBox { size .335 .218 .024 bevel .008 }
+          }
+        ]
+      }
+      # Mid CNC brushed-gunmetal avionics core bay
+      Pose {
+        translation 0 0 .006
+        children [
+          Shape {
+            appearance DEF GUNMETAL PBRAppearance {
+              baseColor .65 .68 .71
+              baseColorMap ImageTexture { url [ "textures/brushed_metal_base.png" ] }
+              normalMap ImageTexture { url [ "textures/brushed_metal_normal.png" ] }
+              normalMapFactor 0.22
+              textureTransform TextureTransform { scale 4 3 }
+              roughness .36
+              metalness .78
+            }
+            geometry BeveledBox { size .368 .224 .036 bevel .009 }
+          }
+        ]
+      }
+      # Upper stealth-faceted carbon-fiber top deck
+      Pose {
+        translation -.004 0 .036
+        children [
+          Shape {
+            appearance USE CARBON_FRAME
+            geometry BeveledBox { size .342 .204 .024 bevel .009 }
+          }
+        ]
+      }
+      # Subtle anodized rescue-orange center accent band along fuselage waist
+      Pose {
+        translation 0 0 .022
+        children [
+          Shape {
+            appearance DEF RESCUE_ORANGE PBRAppearance {
+              baseColor .86 .25 .06
+              roughness .38
+              metalness .24
+            }
+            geometry BeveledBox { size .372 .227 .006 bevel .0015 }
+          }
+        ]
+      }
+      # High-res tactical survey stencil plate flush on top deck
+      Shape {
+        appearance PBRAppearance {
+          baseColorMap ImageTexture { url [ "textures/rescue_drone_id.png" ] }
+          roughness .46
+          metalness .12
+        }
+        geometry IndexedFaceSet {
+          coord Coordinate {
+            point [ -.112 -.054 .0488, .104 -.054 .0488, .104 .054 .0488, -.112 .054 .0488 ]
+          }
+          coordIndex [ 0 1 2 3 -1 ]
+          texCoord TextureCoordinate { point [ 0 0, 1 0, 1 1, 0 1 ] }
+        }
+      }
+
+      # Front binocular obstacle-avoidance optical pod + status strobe
+      Pose {
+        translation .184 0 .008
+        children [
+          Shape { appearance DEF MATTE_BLACK PBRAppearance { baseColor .07 .085 .095 roughness .72 metalness .20 }
+                  geometry BeveledBox { size .024 .136 .028 bevel .005 } }
+          
+            Pose {
+              translation .012 -0.042 0
+              rotation 0 1 0 1.5707963268
+              children [
+                Shape { appearance DEF RAW_ALU PBRAppearance { baseColor .56 .60 .62 roughness .30 metalness .85 }
+                        geometry Cylinder { radius .011 height .004 subdivision 24 } }
+                Pose {
+                  translation 0 0 .002
+                  children [
+                    Shape { appearance DEF OPTICAL_GLASS PBRAppearance { baseColor .02 .04 .06 roughness .06 metalness .32 }
+                            geometry Cylinder { radius .008 height .0025 subdivision 24 } }
+                  ]
+                }
+              ]
+            }
+          
+            Pose {
+              translation .012 0.042 0
+              rotation 0 1 0 1.5707963268
+              children [
+                Shape { appearance DEF RAW_ALU PBRAppearance { baseColor .56 .60 .62 roughness .30 metalness .85 }
+                        geometry Cylinder { radius .011 height .004 subdivision 24 } }
+                Pose {
+                  translation 0 0 .002
+                  children [
+                    Shape { appearance DEF OPTICAL_GLASS PBRAppearance { baseColor .02 .04 .06 roughness .06 metalness .32 }
+                            geometry Cylinder { radius .008 height .0025 subdivision 24 } }
+                  ]
+                }
+              ]
+            }
+          
+          # Center white front strobe LED
+          Pose {
+            translation .013 0 0
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor .95 .98 1.0 emissiveColor .70 .85 1.0 emissiveIntensity .95 roughness .2 metalness 0 }
+                geometry Box { size .003 .024 .007 }
+              }
+            ]
+          }
+        ]
+      }
+
+      # === 2. TWIN SIDE-MOUNTED HOT-SWAP INTELLIGENT BATTERY PACKS ===
+      
+        Pose {
+          translation -.012 -0.124 .004
+          children [
+            Shape { appearance DEF TACTICAL_SLATE PBRAppearance { baseColor .20 .23 .26 roughness .58 metalness .28 }
+                    geometry BeveledBox { size .178 .042 .044 bevel .006 } }
+            # Orange quick-release battery latch
+            Pose {
+              translation -.088 0 .002
+              children [
+                Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .010 .024 .026 bevel .002 } }
+              ]
+            }
+            # 4 glowing green LED charge-indicator bars on outer battery face
+            
+              Pose {
+                translation -0.028 -0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation -0.014 -0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation 0 -0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation 0.014000000000000002 -0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+          ]
+        }
+      
+        Pose {
+          translation -.012 0.124 .004
+          children [
+            Shape { appearance DEF TACTICAL_SLATE PBRAppearance { baseColor .20 .23 .26 roughness .58 metalness .28 }
+                    geometry BeveledBox { size .178 .042 .044 bevel .006 } }
+            # Orange quick-release battery latch
+            Pose {
+              translation -.088 0 .002
+              children [
+                Shape { appearance USE RESCUE_ORANGE geometry BeveledBox { size .010 .024 .026 bevel .002 } }
+              ]
+            }
+            # 4 glowing green LED charge-indicator bars on outer battery face
+            
+              Pose {
+                translation -0.028 0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation -0.014 0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation 0 0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+              Pose {
+                translation 0.014000000000000002 0.0215 .008
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .12 .92 .40 emissiveColor .12 .92 .40 emissiveIntensity .85 roughness .25 metalness 0 }
+                    geometry Box { size .007 .002 .005 }
+                  }
+                ]
+              }
+            
+          ]
+        }
+      
+
+      # === 3. DUAL REAR RTK GNSS MUSHROOM ANTENNAS ===
+      
+        Pose {
+          translation -.142 -0.076 .072
+          rotation 0 1 0 -.24
+          children [
+            Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .005 height .060 subdivision 12 } }
+            Pose {
+              translation 0 0 .033
+              children [
+                Shape { appearance USE TACTICAL_SLATE geometry Cylinder { radius .022 height .013 subdivision 24 } }
+                Pose {
+                  translation 0 0 .007
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .016 height .0025 subdivision 24 } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      
+        Pose {
+          translation -.142 0.076 .072
+          rotation 0 1 0 -.24
+          children [
+            Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .005 height .060 subdivision 12 } }
+            Pose {
+              translation 0 0 .033
+              children [
+                Shape { appearance USE TACTICAL_SLATE geometry Cylinder { radius .022 height .013 subdivision 24 } }
+                Pose {
+                  translation 0 0 .007
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .016 height .0025 subdivision 24 } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      
+
+      # === 4. SLENDER TUBULAR CARBON ARMS, CNC FOLDING CLAMPS & BRUSHLESS MOTORS ===
+      
+        Pose {
+          translation 0.115 0.082 .006
+          rotation 0 0 1 0.7610127542247297
+          children [
+            # CNC machined aluminum folding-lock hinge clamp at fuselage root
+            Pose {
+              translation .026 0 0
+              children [
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .056 .042 .036 bevel .005 } }
+                # Orange anodized folding lock collar
+                Pose {
+                  translation .024 0 0
+                  rotation 0 1 0 1.5707963268
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0195 height .012 subdivision 20 } }
+                  ]
+                }
+                # Stainless vertical hinge pivot bolt
+                Pose {
+                  translation -.004 0 0
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .0065 height .042 subdivision 12 } }
+                  ]
+                }
+              ]
+            }
+            # Slender high-aspect-ratio 3K carbon-fiber arm tube
+            Pose {
+              translation 0.1885 0 .006
+              rotation 0 1 0 1.54
+              children [
+                Shape {
+                  appearance USE CARBON_FRAME
+                  geometry Cylinder { radius .0145 height 0.377 subdivision 24 }
+                }
+              ]
+            }
+            # Mid-arm ESC cable retention collar
+            Pose {
+              translation 0.21866 0 .007
+              rotation 0 1 0 1.54
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .0168 height .014 subdivision 20 } }
+              ]
+            }
+          ]
+        }
+
+        # Brushless out-runner motor assembly & 0.225 m swept carbon propeller
+        Pose {
+          translation 0.388 0.342 .018
+          children [
+            # CNC gunmetal motor mount cup
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .035 height .024 subdivision 32 } }
+            # Under-motor aviation orientation LED ring (Front = RED, Rear = GREEN)
+            Pose {
+              translation 0 0 -.014
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor .95 .12 .08
+                    emissiveColor .95 .12 .08
+                    emissiveIntensity .95
+                    roughness .20
+                    metalness 0
+                  }
+                  geometry Cylinder { radius .028 height .006 subdivision 24 }
+                }
+              ]
+            }
+            # Exposed metallic copper stator winding core
+            Pose {
+              translation 0 0 .018
+              children [
+                Shape {
+                  appearance DEF COPPER PBRAppearance { baseColor .74 .36 .16 roughness .30 metalness .88 }
+                  geometry Cylinder { radius .024 height .012 subdivision 28 }
+                }
+              ]
+            }
+            # Vented CNC matte-black out-runner rotor bell + machined aluminum top ring
+            Pose {
+              translation 0 0 .025
+              children [
+                Shape { appearance USE MATTE_BLACK geometry Cylinder { radius .029 height .014 subdivision 28 } }
+                Pose {
+                  translation 0 0 .008
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .025 height .0035 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+            # Folding propeller hub + swept 0.225 m carbon blades
+            Pose {
+              translation 0 0 .036
+              rotation 0 0 1 0.42
+              children [
+                # Metallic twin-bolt folding hub bar + spinner nut
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .048 .016 .008 bevel .002 } }
+                Pose {
+                  translation 0 0 .006
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .009 height .009 subdivision 16 } }
+                  ]
+                }
+                
+                  Pose {
+                    rotation 0 0 1 0
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry DEF BLADE_CCW IndexedFaceSet {
+                            coord Coordinate {
+                              point [
+                                
+                                       0.022 -0.0075 -0.0016
+                                
+                                       0.068 -0.0165 -0.0016
+                                
+                                       0.132 -0.0175 -0.0016
+                                
+                                       0.188 -0.0105 -0.0016
+                                
+                                       0.22 -0.001 -0.0016
+                                
+                                       0.226 0.0095 -0.0016
+                                
+                                       0.212 0.0175 -0.0016
+                                
+                                       0.154 0.016 -0.0016
+                                
+                                       0.08 0.0105 -0.0016
+                                
+                                       0.022 0.0075 -0.0016
+                                
+                                       0.022 -0.0075 0.0016
+                                
+                                       0.068 -0.0165 0.0016
+                                
+                                       0.132 -0.0175 0.0016
+                                
+                                       0.188 -0.0105 0.0016
+                                
+                                       0.22 -0.001 0.0016
+                                
+                                       0.226 0.0095 0.0016
+                                
+                                       0.212 0.0175 0.0016
+                                
+                                       0.154 0.016 0.0016
+                                
+                                       0.08 0.0105 0.0016
+                                
+                                       0.022 0.0075 0.0016
+                                
+                              ]
+                            }
+                            coordIndex [
+                              9 8 7 6 5 4 3 2 1 0 -1
+                              
+                                0 1 11 10 -1
+                              
+                                1 2 12 11 -1
+                              
+                                2 3 13 12 -1
+                              
+                                3 4 14 13 -1
+                              
+                                4 5 15 14 -1
+                              
+                                5 6 16 15 -1
+                              
+                                6 7 17 16 -1
+                              
+                                7 8 18 17 -1
+                              
+                                8 9 19 18 -1
+                              
+                                9 0 10 19 -1
+                              
+                              10 11 12 13 14 15 16 17 18 19 -1
+                            ]
+                          }
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 0.007 .0022
+                        rotation 0 0 1 0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+                  Pose {
+                    rotation 0 0 1 3.141592653589793
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CCW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 0.007 .0022
+                        rotation 0 0 1 0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+              ]
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0.115 -0.082 .006
+          rotation 0 0 1 -0.7610127542247297
+          children [
+            # CNC machined aluminum folding-lock hinge clamp at fuselage root
+            Pose {
+              translation .026 0 0
+              children [
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .056 .042 .036 bevel .005 } }
+                # Orange anodized folding lock collar
+                Pose {
+                  translation .024 0 0
+                  rotation 0 1 0 1.5707963268
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0195 height .012 subdivision 20 } }
+                  ]
+                }
+                # Stainless vertical hinge pivot bolt
+                Pose {
+                  translation -.004 0 0
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .0065 height .042 subdivision 12 } }
+                  ]
+                }
+              ]
+            }
+            # Slender high-aspect-ratio 3K carbon-fiber arm tube
+            Pose {
+              translation 0.1885 0 .006
+              rotation 0 1 0 1.54
+              children [
+                Shape {
+                  appearance USE CARBON_FRAME
+                  geometry Cylinder { radius .0145 height 0.377 subdivision 24 }
+                }
+              ]
+            }
+            # Mid-arm ESC cable retention collar
+            Pose {
+              translation 0.21866 0 .007
+              rotation 0 1 0 1.54
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .0168 height .014 subdivision 20 } }
+              ]
+            }
+          ]
+        }
+
+        # Brushless out-runner motor assembly & 0.225 m swept carbon propeller
+        Pose {
+          translation 0.388 -0.342 .018
+          children [
+            # CNC gunmetal motor mount cup
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .035 height .024 subdivision 32 } }
+            # Under-motor aviation orientation LED ring (Front = RED, Rear = GREEN)
+            Pose {
+              translation 0 0 -.014
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor .95 .12 .08
+                    emissiveColor .95 .12 .08
+                    emissiveIntensity .95
+                    roughness .20
+                    metalness 0
+                  }
+                  geometry Cylinder { radius .028 height .006 subdivision 24 }
+                }
+              ]
+            }
+            # Exposed metallic copper stator winding core
+            Pose {
+              translation 0 0 .018
+              children [
+                Shape {
+                  appearance DEF COPPER PBRAppearance { baseColor .74 .36 .16 roughness .30 metalness .88 }
+                  geometry Cylinder { radius .024 height .012 subdivision 28 }
+                }
+              ]
+            }
+            # Vented CNC matte-black out-runner rotor bell + machined aluminum top ring
+            Pose {
+              translation 0 0 .025
+              children [
+                Shape { appearance USE MATTE_BLACK geometry Cylinder { radius .029 height .014 subdivision 28 } }
+                Pose {
+                  translation 0 0 .008
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .025 height .0035 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+            # Folding propeller hub + swept 0.225 m carbon blades
+            Pose {
+              translation 0 0 .036
+              rotation 0 0 1 -0.67
+              children [
+                # Metallic twin-bolt folding hub bar + spinner nut
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .048 .016 .008 bevel .002 } }
+                Pose {
+                  translation 0 0 .006
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .009 height .009 subdivision 16 } }
+                  ]
+                }
+                
+                  Pose {
+                    rotation 0 0 1 0
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry DEF BLADE_CW IndexedFaceSet {
+                            coord Coordinate {
+                              point [
+                                
+                                       0.022 -0.0075 -0.0016
+                                
+                                       0.08 -0.0105 -0.0016
+                                
+                                       0.154 -0.016 -0.0016
+                                
+                                       0.212 -0.0175 -0.0016
+                                
+                                       0.226 -0.0095 -0.0016
+                                
+                                       0.22 0.001 -0.0016
+                                
+                                       0.188 0.0105 -0.0016
+                                
+                                       0.132 0.0175 -0.0016
+                                
+                                       0.068 0.0165 -0.0016
+                                
+                                       0.022 0.0075 -0.0016
+                                
+                                       0.022 -0.0075 0.0016
+                                
+                                       0.08 -0.0105 0.0016
+                                
+                                       0.154 -0.016 0.0016
+                                
+                                       0.212 -0.0175 0.0016
+                                
+                                       0.226 -0.0095 0.0016
+                                
+                                       0.22 0.001 0.0016
+                                
+                                       0.188 0.0105 0.0016
+                                
+                                       0.132 0.0175 0.0016
+                                
+                                       0.068 0.0165 0.0016
+                                
+                                       0.022 0.0075 0.0016
+                                
+                              ]
+                            }
+                            coordIndex [
+                              9 8 7 6 5 4 3 2 1 0 -1
+                              
+                                0 1 11 10 -1
+                              
+                                1 2 12 11 -1
+                              
+                                2 3 13 12 -1
+                              
+                                3 4 14 13 -1
+                              
+                                4 5 15 14 -1
+                              
+                                5 6 16 15 -1
+                              
+                                6 7 17 16 -1
+                              
+                                7 8 18 17 -1
+                              
+                                8 9 19 18 -1
+                              
+                                9 0 10 19 -1
+                              
+                              10 11 12 13 14 15 16 17 18 19 -1
+                            ]
+                          }
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 -0.007 .0022
+                        rotation 0 0 1 -0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+                  Pose {
+                    rotation 0 0 1 3.141592653589793
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 -0.007 .0022
+                        rotation 0 0 1 -0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+              ]
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.115 0.082 .006
+          rotation 0 0 1 2.3805798993650633
+          children [
+            # CNC machined aluminum folding-lock hinge clamp at fuselage root
+            Pose {
+              translation .026 0 0
+              children [
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .056 .042 .036 bevel .005 } }
+                # Orange anodized folding lock collar
+                Pose {
+                  translation .024 0 0
+                  rotation 0 1 0 1.5707963268
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0195 height .012 subdivision 20 } }
+                  ]
+                }
+                # Stainless vertical hinge pivot bolt
+                Pose {
+                  translation -.004 0 0
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .0065 height .042 subdivision 12 } }
+                  ]
+                }
+              ]
+            }
+            # Slender high-aspect-ratio 3K carbon-fiber arm tube
+            Pose {
+              translation 0.1885 0 .006
+              rotation 0 1 0 1.54
+              children [
+                Shape {
+                  appearance USE CARBON_FRAME
+                  geometry Cylinder { radius .0145 height 0.377 subdivision 24 }
+                }
+              ]
+            }
+            # Mid-arm ESC cable retention collar
+            Pose {
+              translation 0.21866 0 .007
+              rotation 0 1 0 1.54
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .0168 height .014 subdivision 20 } }
+              ]
+            }
+          ]
+        }
+
+        # Brushless out-runner motor assembly & 0.225 m swept carbon propeller
+        Pose {
+          translation -0.388 0.342 .018
+          children [
+            # CNC gunmetal motor mount cup
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .035 height .024 subdivision 32 } }
+            # Under-motor aviation orientation LED ring (Front = RED, Rear = GREEN)
+            Pose {
+              translation 0 0 -.014
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor .10 .92 .32
+                    emissiveColor .10 .92 .32
+                    emissiveIntensity .95
+                    roughness .20
+                    metalness 0
+                  }
+                  geometry Cylinder { radius .028 height .006 subdivision 24 }
+                }
+              ]
+            }
+            # Exposed metallic copper stator winding core
+            Pose {
+              translation 0 0 .018
+              children [
+                Shape {
+                  appearance DEF COPPER PBRAppearance { baseColor .74 .36 .16 roughness .30 metalness .88 }
+                  geometry Cylinder { radius .024 height .012 subdivision 28 }
+                }
+              ]
+            }
+            # Vented CNC matte-black out-runner rotor bell + machined aluminum top ring
+            Pose {
+              translation 0 0 .025
+              children [
+                Shape { appearance USE MATTE_BLACK geometry Cylinder { radius .029 height .014 subdivision 28 } }
+                Pose {
+                  translation 0 0 .008
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .025 height .0035 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+            # Folding propeller hub + swept 0.225 m carbon blades
+            Pose {
+              translation 0 0 .036
+              rotation 0 0 1 -0.22
+              children [
+                # Metallic twin-bolt folding hub bar + spinner nut
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .048 .016 .008 bevel .002 } }
+                Pose {
+                  translation 0 0 .006
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .009 height .009 subdivision 16 } }
+                  ]
+                }
+                
+                  Pose {
+                    rotation 0 0 1 0
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 -0.007 .0022
+                        rotation 0 0 1 -0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+                  Pose {
+                    rotation 0 0 1 3.141592653589793
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 -0.007 .0022
+                        rotation 0 0 1 -0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+              ]
+            }
+          ]
+        }
+      
+        Pose {
+          translation -0.115 -0.082 .006
+          rotation 0 0 1 -2.3805798993650633
+          children [
+            # CNC machined aluminum folding-lock hinge clamp at fuselage root
+            Pose {
+              translation .026 0 0
+              children [
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .056 .042 .036 bevel .005 } }
+                # Orange anodized folding lock collar
+                Pose {
+                  translation .024 0 0
+                  rotation 0 1 0 1.5707963268
+                  children [
+                    Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .0195 height .012 subdivision 20 } }
+                  ]
+                }
+                # Stainless vertical hinge pivot bolt
+                Pose {
+                  translation -.004 0 0
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .0065 height .042 subdivision 12 } }
+                  ]
+                }
+              ]
+            }
+            # Slender high-aspect-ratio 3K carbon-fiber arm tube
+            Pose {
+              translation 0.1885 0 .006
+              rotation 0 1 0 1.54
+              children [
+                Shape {
+                  appearance USE CARBON_FRAME
+                  geometry Cylinder { radius .0145 height 0.377 subdivision 24 }
+                }
+              ]
+            }
+            # Mid-arm ESC cable retention collar
+            Pose {
+              translation 0.21866 0 .007
+              rotation 0 1 0 1.54
+              children [
+                Shape { appearance USE GUNMETAL geometry Cylinder { radius .0168 height .014 subdivision 20 } }
+              ]
+            }
+          ]
+        }
+
+        # Brushless out-runner motor assembly & 0.225 m swept carbon propeller
+        Pose {
+          translation -0.388 -0.342 .018
+          children [
+            # CNC gunmetal motor mount cup
+            Shape { appearance USE GUNMETAL geometry Cylinder { radius .035 height .024 subdivision 32 } }
+            # Under-motor aviation orientation LED ring (Front = RED, Rear = GREEN)
+            Pose {
+              translation 0 0 -.014
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor .10 .92 .32
+                    emissiveColor .10 .92 .32
+                    emissiveIntensity .95
+                    roughness .20
+                    metalness 0
+                  }
+                  geometry Cylinder { radius .028 height .006 subdivision 24 }
+                }
+              ]
+            }
+            # Exposed metallic copper stator winding core
+            Pose {
+              translation 0 0 .018
+              children [
+                Shape {
+                  appearance DEF COPPER PBRAppearance { baseColor .74 .36 .16 roughness .30 metalness .88 }
+                  geometry Cylinder { radius .024 height .012 subdivision 28 }
+                }
+              ]
+            }
+            # Vented CNC matte-black out-runner rotor bell + machined aluminum top ring
+            Pose {
+              translation 0 0 .025
+              children [
+                Shape { appearance USE MATTE_BLACK geometry Cylinder { radius .029 height .014 subdivision 28 } }
+                Pose {
+                  translation 0 0 .008
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .025 height .0035 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+            # Folding propeller hub + swept 0.225 m carbon blades
+            Pose {
+              translation 0 0 .036
+              rotation 0 0 1 0.96
+              children [
+                # Metallic twin-bolt folding hub bar + spinner nut
+                Shape { appearance USE GUNMETAL geometry BeveledBox { size .048 .016 .008 bevel .002 } }
+                Pose {
+                  translation 0 0 .006
+                  children [
+                    Shape { appearance USE RAW_ALU geometry Cylinder { radius .009 height .009 subdivision 16 } }
+                  ]
+                }
+                
+                  Pose {
+                    rotation 0 0 1 0
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CCW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 0.007 .0022
+                        rotation 0 0 1 0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+                  Pose {
+                    rotation 0 0 1 3.141592653589793
+                    children [
+                      # Blade pivot stainless screw
+                      Pose {
+                        translation .018 0 .0045
+                        children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .003 height .003 subdivision 10 } } ]
+                      }
+                      Shape {
+                        appearance USE CARBON_FRAME
+                        
+                          geometry USE BLADE_CCW
+                        
+                      }
+                      # Crisp rescue-orange safety tip stripe
+                      Pose {
+                        translation .208 0.007 .0022
+                        rotation 0 0 1 0.32
+                        children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .018 .012 .0012 } } ]
+                      }
+                    ]
+                  }
+                
+              ]
+            }
+          ]
+        }
+      
+
+      # === 5. SLENDER TUBULAR CARBON LANDING GEAR (y = ±.228, 100% CLEAR OF DOWNWARD FOV) ===
+      
+        # Lower horizontal skid tube with flared tips
+        
+          Pose {
+            translation -0.2475 -0.228 -0.221
+            rotation 0 1 0 2.209710311798784
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.0436004587131833 subdivision 20 }
+              }
+            ]
+          }
+        
+          Pose {
+            translation 0 -0.228 -0.234
+            rotation 0 1 0 1.5707963267948966
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.46 subdivision 20 }
+              }
+            ]
+          }
+        
+          Pose {
+            translation 0.2475 -0.228 -0.221
+            rotation 0 1 0 0.9318823417910092
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.0436004587131833 subdivision 20 }
+              }
+            ]
+          }
+        
+        # Rubber shock-absorbing skid end-caps & elbow joints
+        
+          Pose {
+            translation -0.265 -0.228 -0.208
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation -0.23 -0.228 -0.234
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation 0.23 -0.228 -0.234
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation 0.265 -0.228 -0.208
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+        # Twin angled tubular carbon landing struts + CNC T-clamps
+        
+          Pose {
+            translation -0.128 -0.168 -.132
+            rotation 1 0 0 -0.54
+            children [
+              Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .009 height .238 subdivision 20 } }
+            ]
+          }
+          # CNC gunmetal T-joint clamp + subtle orange ring at skid intersection
+          Pose {
+            translation -0.128 -0.228 -.233
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .030 .026 .024 bevel .004 } }
+              Pose {
+                translation 0 -0.013 0
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .020 .002 .008 } } ]
+              }
+            ]
+          }
+          # Upper fuselage landing-gear mounting bracket
+          Pose {
+            translation -0.128 -0.106 -.032
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .026 .024 .020 bevel .003 } }
+            ]
+          }
+        
+          Pose {
+            translation 0.128 -0.168 -.132
+            rotation 1 0 0 -0.54
+            children [
+              Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .009 height .238 subdivision 20 } }
+            ]
+          }
+          # CNC gunmetal T-joint clamp + subtle orange ring at skid intersection
+          Pose {
+            translation 0.128 -0.228 -.233
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .030 .026 .024 bevel .004 } }
+              Pose {
+                translation 0 -0.013 0
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .020 .002 .008 } } ]
+              }
+            ]
+          }
+          # Upper fuselage landing-gear mounting bracket
+          Pose {
+            translation 0.128 -0.106 -.032
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .026 .024 .020 bevel .003 } }
+            ]
+          }
+        
+      
+        # Lower horizontal skid tube with flared tips
+        
+          Pose {
+            translation -0.2475 0.228 -0.221
+            rotation 0 1 0 2.209710311798784
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.0436004587131833 subdivision 20 }
+              }
+            ]
+          }
+        
+          Pose {
+            translation 0 0.228 -0.234
+            rotation 0 1 0 1.5707963267948966
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.46 subdivision 20 }
+              }
+            ]
+          }
+        
+          Pose {
+            translation 0.2475 0.228 -0.221
+            rotation 0 1 0 0.9318823417910092
+            children [
+              Shape {
+                appearance USE CARBON_FRAME
+                geometry Cylinder { radius .0095 height 0.0436004587131833 subdivision 20 }
+              }
+            ]
+          }
+        
+        # Rubber shock-absorbing skid end-caps & elbow joints
+        
+          Pose {
+            translation -0.265 0.228 -0.208
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation -0.23 0.228 -0.234
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation 0.23 0.228 -0.234
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+          Pose {
+            translation 0.265 0.228 -0.208
+            children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .011 subdivision 2 } } ]
+          }
+        
+        # Twin angled tubular carbon landing struts + CNC T-clamps
+        
+          Pose {
+            translation -0.128 0.168 -.132
+            rotation 1 0 0 0.54
+            children [
+              Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .009 height .238 subdivision 20 } }
+            ]
+          }
+          # CNC gunmetal T-joint clamp + subtle orange ring at skid intersection
+          Pose {
+            translation -0.128 0.228 -.233
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .030 .026 .024 bevel .004 } }
+              Pose {
+                translation 0 0.013 0
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .020 .002 .008 } } ]
+              }
+            ]
+          }
+          # Upper fuselage landing-gear mounting bracket
+          Pose {
+            translation -0.128 0.106 -.032
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .026 .024 .020 bevel .003 } }
+            ]
+          }
+        
+          Pose {
+            translation 0.128 0.168 -.132
+            rotation 1 0 0 0.54
+            children [
+              Shape { appearance USE CARBON_FRAME geometry Cylinder { radius .009 height .238 subdivision 20 } }
+            ]
+          }
+          # CNC gunmetal T-joint clamp + subtle orange ring at skid intersection
+          Pose {
+            translation 0.128 0.228 -.233
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .030 .026 .024 bevel .004 } }
+              Pose {
+                translation 0 0.013 0
+                children [ Shape { appearance USE RESCUE_ORANGE geometry Box { size .020 .002 .008 } } ]
+              }
+            ]
+          }
+          # Upper fuselage landing-gear mounting bracket
+          Pose {
+            translation 0.128 0.106 -.032
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .026 .024 .020 bevel .003 } }
+            ]
+          }
+        
+      
+
+      # === 6. PRECISION 3-AXIS CNC NADIR RGB-D GIMBAL (STRICTLY z >= -.188 > -.200) ===
+      # Vibration-damping top plate + 4 rubber isolation balls
+      Pose {
+        translation 0 0 -.046
+        children [
+          Shape { appearance USE CARBON_FRAME geometry BeveledBox { size .096 .096 .006 bevel .0015 } }
+          
+            Pose {
+              translation -0.036 -0.036 -.012
+              children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .0095 subdivision 2 } } ]
+            }
+          
+            Pose {
+              translation -0.036 0.036 -.012
+              children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .0095 subdivision 2 } } ]
+            }
+          
+            Pose {
+              translation 0.036 -0.036 -.012
+              children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .0095 subdivision 2 } } ]
+            }
+          
+            Pose {
+              translation 0.036 0.036 -.012
+              children [ Shape { appearance USE MATTE_BLACK geometry Sphere { radius .0095 subdivision 2 } } ]
+            }
+          
+          # Lower damped gimbal mounting plate + yaw motor drum
+          Pose {
+            translation 0 0 -.024
+            children [
+              Shape { appearance USE GUNMETAL geometry BeveledBox { size .088 .088 .006 bevel .0015 } }
+              Pose {
+                translation 0 0 -.014
+                children [
+                  Shape { appearance USE GUNMETAL geometry Cylinder { radius .028 height .022 subdivision 28 } }
+                  Pose {
+                    translation 0 0 -.008
+                    children [ Shape { appearance USE RAW_ALU geometry Cylinder { radius .029 height .004 subdivision 28 } } ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+      # Horizontal CNC gimbal cross-bridge uniting yaw drum and both yoke arms
+      Pose {
+        translation 0 0 -.094
+        children [
+          Shape { appearance USE GUNMETAL geometry BeveledBox { size .042 .138 .014 bevel .004 } }
+        ]
+      }
+      # Twin sculpted CNC aluminum gimbal yoke arms + pitch motor caps
+      
+        Pose {
+          translation 0 -0.062 -.122
+          children [
+            Shape { appearance USE GUNMETAL geometry BeveledBox { size .042 .016 .068 bevel .004 } }
+            Pose {
+              translation 0 -0.011 -.016
+              rotation 1 0 0 1.5707963268
+              children [
+                Shape { appearance USE RAW_ALU geometry Cylinder { radius .018 height .009 subdivision 24 } }
+                Pose {
+                  translation 0 0 -0.005
+                  children [ Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .010 height .002 subdivision 20 } } ]
+                }
+              ]
+            }
+          ]
+        }
+      
+        Pose {
+          translation 0 0.062 -.122
+          children [
+            Shape { appearance USE GUNMETAL geometry BeveledBox { size .042 .016 .068 bevel .004 } }
+            Pose {
+              translation 0 0.011 -.016
+              rotation 1 0 0 1.5707963268
+              children [
+                Shape { appearance USE RAW_ALU geometry Cylinder { radius .018 height .009 subdivision 24 } }
+                Pose {
+                  translation 0 0 0.005
+                  children [ Shape { appearance USE RESCUE_ORANGE geometry Cylinder { radius .010 height .002 subdivision 20 } } ]
+                }
+              ]
+            }
+          ]
+        }
+      
+      # Machined optical payload head (lowest lens face at z = -.187, strictly above camera at z = -.200)
+      Pose {
+        translation 0 0 -.148
+        children [
+          Shape { appearance USE TACTICAL_SLATE geometry BeveledBox { size .086 .110 .062 bevel .010 } }
+          # Dark recessed lower optical plate
+          Pose {
+            translation 0 0 -.031
+            children [
+              Shape { appearance USE MATTE_BLACK geometry BeveledBox { size .072 .096 .006 bevel .0015 } }
+            ]
+          }
+          # Center sapphire RGB lens + twin stereo IR depth lenses
+          
+            Pose {
+              translation 0 -0.034 -.035
+              children [
+                Shape { appearance USE RAW_ALU geometry Cylinder { radius 0.013999999999999999 height .006 subdivision 28 } }
+                Pose {
+                  translation 0 0 -.0025
+                  children [
+                    Shape { appearance USE OPTICAL_GLASS geometry Cylinder { radius 0.011 height .003 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+          
+            Pose {
+              translation 0 0 -.035
+              children [
+                Shape { appearance USE RAW_ALU geometry Cylinder { radius 0.020999999999999998 height .006 subdivision 28 } }
+                Pose {
+                  translation 0 0 -.0025
+                  children [
+                    Shape { appearance USE OPTICAL_GLASS geometry Cylinder { radius 0.018 height .003 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+          
+            Pose {
+              translation 0 0.034 -.035
+              children [
+                Shape { appearance USE RAW_ALU geometry Cylinder { radius 0.013999999999999999 height .006 subdivision 28 } }
+                Pose {
+                  translation 0 0 -.0025
+                  children [
+                    Shape { appearance USE OPTICAL_GLASS geometry Cylinder { radius 0.011 height .003 subdivision 28 } }
+                  ]
+                }
+              ]
+            }
+          
+        ]
+      }
+
+      # === 7. ONBOARD SENSORS & RADIO (100% UNCHANGED) + VISUALIZATION CHASE CAM ===
+      Camera { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_rgb"
+               width 640 height 480 fieldOfView 1.1 near .05 far 30 noise .003 }
+      Camera { translation -1.10 0 0.48 rotation 0 1 0 0.46 name "drone_fpv_cam"
+               width 480 height 270 fieldOfView 1.15 near .1 far 120 }
+      RangeFinder { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_depth"
+                    width 640 height 480 fieldOfView 1.1 minRange .2 maxRange 24 noise .002 }
+      GPS { translation 0 0 -.20 name "aerial_gps" accuracy .04 noiseCorrelation .2 }
+      InertialUnit { name "aerial_attitude" noise .003 }
+      Emitter { name "aerial_radio" channel 17 range 100 }
+    ]
+    boundingObject Box { size 1.10 1.10 .25 }
+    # No Physics: the environment or survey controller sets the flight path.
+  }
+}

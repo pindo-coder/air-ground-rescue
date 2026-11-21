@@ -114,6 +114,14 @@ def write_environment(output, config, terrain, grid):
         "origin": terrain.fields["translation"][:2],
         "spacing": [dx, dy],
         "heights": [flat[j * nx:(j + 1) * nx] for j in range(ny)],
+        "spherical_origin": {
+            "surface_model": "EARTH_WGS84",
+            "world_frame_orientation": "ENU",
+            "latitude_deg": 0.0,
+            "longitude_deg": 0.0,
+            "elevation_m": 0.0,
+            "heading_deg": 0.0,
+        },
         "routes": routes,
     }
     (output / "environment.json").write_text(json.dumps(runtime), encoding="utf-8")
@@ -142,10 +150,19 @@ def export(output):
     element(scene, "ambient", "0.5 0.5 0.5 1")
     element(scene, "background", "0.62 0.73 0.81 1")
 
+    spherical = element(world, "spherical_coordinates")
+    element(spherical, "surface_model", "EARTH_WGS84")
+    element(spherical, "world_frame_orientation", "ENU")
+    element(spherical, "latitude_deg", "0.0")
+    element(spherical, "longitude_deg", "0.0")
+    element(spherical, "elevation", "0.0")
+    element(spherical, "heading_deg", "0.0")
+
     # A world with explicit plugins needs Gazebo's base world systems as well.
     for filename, name in (
         ("physics", "Physics"), ("user-commands", "UserCommands"),
-        ("scene-broadcaster", "SceneBroadcaster"), ("imu", "Imu")
+        ("scene-broadcaster", "SceneBroadcaster"), ("imu", "Imu"),
+        ("navsat", "NavSat"), ("contact", "Contact"),
     ):
         element(world, "plugin", filename=f"gz-sim-{filename}-system",
                 name=f"gz::sim::systems::{name}")

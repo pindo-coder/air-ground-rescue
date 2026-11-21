@@ -2,12 +2,14 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+import hashlib
 from itertools import chain
 import json
 import math
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 
 
@@ -15,8 +17,9 @@ TOKEN = re.compile(r'#[^\n]*|"(?:\\.|[^"\\])*"|[{}\[\]]|[^\s,{}\[\]"#]+')
 NUMBER = re.compile(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?')
 IDENTITY = (0, 0, 0, 1)
 UNIT_SCALE = (1, 1, 1)
-GEOMETRIES = {"Box", "Cylinder", "Sphere", "IndexedFaceSet", "Mesh"}
+GEOMETRIES = {"Box", "Cylinder", "Sphere", "IndexedFaceSet", "Mesh", "BeveledBox", "RoundedHousing"}
 TREES = {"Pine", "Oak", "Sassafras", "Cypress"}
+VEHICLE_PROTOS = {"RescueRoverBody", "RescueRoverWheel", "ObserverDrone", "ResearchRover", "VisionRover"}
 
 
 @dataclass(eq=False)
@@ -122,7 +125,144 @@ class Parser:
         return nodes
 
 
-def read_proto(source):
+def _js_field_value(field_type, value):
+    if field_type == "SFVec3f":
+        return {"x": float(value[0]), "y": float(value[1]), "z": float(value[2])}
+    if field_type == "SFVec2f":
+        return {"x": float(value[0]), "y": float(value[1])}
+    if field_type == "MFVec3f":
+        return [{"x": float(value[i]), "y": float(value[i + 1]), "z": float(value[i + 2])}
+                for i in range(0, len(value), 3)]
+    return value
+
+
+def _parse_proto_header(text, source):
+    """Parse EXTERNPROTO + PROTO field declarations without evaluating template blocks."""
+    # Extract header before opening '{' of PROTO body.
+    match = re.search(r"PROTO\s+" + re.escape(source.stem) + r"\s*\[(.*?)\]\s*\{", text, flags=re.S)
+    if not match:
+        raise ValueError(f"Could not parse PROTO header in {source.name}")
+    header_text = match.group(1)
+    parser = Parser(header_text, source)
+    defaults = {}
+    field_types = {}
+    while parser.peek():
+        parser.take("field")
+        ftype = parser.take()
+        key = parser.take()
+        defaults[key] = parser.value()
+        field_types[key] = ftype
+    return defaults, field_types
+
+
+def _expand_js_template(source, text, defaults, field_types, overrides):
+    merged = {**defaults, **(overrides or {})}
+    fields_js = {
+        key: {"value": _js_field_value(field_types[key], merged[key])}
+        for key in field_types
+    }
+    digest = hashlib.sha256(
+        (text + "\n" + json.dumps(fields_js, sort_keys=True)).encode("utf-8")
+    ).hexdigest()[:12]
+    cache_dir = source.parents[1] / "gazebo" / "proto_cache"
+    cache_path = cache_dir / f"{source.stem}_{digest}.vrml"
+    node_exe = shutil.which("node")
+    if node_exe:
+        tokens = re.split(r"(%<=?.*?>%)", text, flags=re.S)
+        parts = ["let __out = [];", f"const fields = {json.dumps(fields_js)};"]
+        for tok in tokens:
+            if tok.startswith("%<=") and tok.endswith(">%"):
+                parts.append(f"__out.push(String({tok[3:-2].strip()}));")
+            elif tok.startswith("%<") and tok.endswith(">%"):
+                parts.append(tok[2:-2])
+            else:
+                parts.append(f"__out.push({json.dumps(tok)});")
+        parts.append('process.stdout.write(__out.join(""));')
+        result = subprocess.run([node_exe, "-e", "\n".join(parts)], capture_output=True, text=True, check=True)
+        expanded = result.stdout
+        if cache_dir.parent.is_dir():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            if not cache_path.is_file() or cache_path.read_text(encoding="utf-8") != expanded:
+                cache_path.write_text(expanded, encoding="utf-8")
+        return expanded
+    if cache_path.is_file():
+        return cache_path.read_text(encoding="utf-8")
+    raise RuntimeError(
+        f"Webots JS template {source.name} requires Node.js (`node`) or cached expansion at {cache_path}"
+    )
+
+
+def beveled_box_node(node):
+    """Pure-Python equivalent of protos/BeveledBox.proto."""
+    sx, sy, sz = node.fields.get("size", (1.0, 1.0, 1.0))
+    x, y, z = sx / 2.0, sy / 2.0, sz / 2.0
+    bevel = min(float(node.fields.get("bevel", 0.05)), 0.42 * min(x, y, z))
+    rings = (
+        (x - bevel, y - bevel, -z, bevel),
+        (x, y, -z + bevel, 1.4 * bevel),
+        (x, y, z - bevel, 1.4 * bevel),
+        (x - bevel, y - bevel, z, bevel),
+    )
+    pts = []
+    for a, b, height, corner in rings:
+        pts.extend([
+            -a + corner, -b, height,
+            a - corner, -b, height,
+            a, -b + corner, height,
+            a, b - corner, height,
+            a - corner, b, height,
+            -a + corner, b, height,
+            -a, b - corner, height,
+            -a, -b + corner, height,
+        ])
+    indices = [7, 6, 5, 4, 3, 2, 1, 0, -1]
+    for ring in range(3):
+        for side in range(8):
+            frm = ring * 8 + side
+            to = ring * 8 + (side + 1) % 8
+            indices.extend([frm, to, to + 8, frm + 8, -1])
+    indices.extend([24, 25, 26, 27, 28, 29, 30, 31, -1])
+    coord = Node("Coordinate", {"point": pts}, node.source)
+    return Node("IndexedFaceSet", {"coord": coord, "coordIndex": indices}, node.source, node.name or "BeveledBox")
+
+
+def rounded_housing_node(node):
+    """Pure-Python equivalent of protos/RoundedHousing.proto."""
+    raw_profile = node.fields.get("profile", [1, 1, -0.5, 1, 1, 0.5])
+    sections = vectors(raw_profile, 3)
+    offset = node.fields.get("topOffset", (0.0, 0.0))
+    corner_radius = float(node.fields.get("cornerRadius", 0.05))
+    sides = 4
+    points_per_ring = 4 * (sides + 1)
+    first_z, last_z = sections[0][2], sections[-1][2]
+    span_z = (last_z - first_z) or 1.0
+    signs = ((1, 1), (-1, 1), (-1, -1), (1, -1))
+    pts = []
+    for sx_full, sy_full, sz in sections:
+        x, y = sx_full / 2.0, sy_full / 2.0
+        radius = max(1e-6, min(corner_radius, 0.86 * min(x, y)))
+        shift = (sz - first_z) / span_z
+        for corner, (sx, sy) in enumerate(signs):
+            for step in range(sides + 1):
+                angle = (corner + step / sides) * math.pi / 2.0
+                px = sx * (x - radius) + radius * math.cos(angle) + offset[0] * shift
+                py = sy * (y - radius) + radius * math.sin(angle) + offset[1] * shift
+                pts.extend([px, py, sz])
+    cap = list(range(points_per_ring))
+    top = (len(sections) - 1) * points_per_ring
+    indices = list(reversed(cap)) + [-1]
+    for ring in range(len(sections) - 1):
+        for i in range(points_per_ring):
+            a = ring * points_per_ring + i
+            b = ring * points_per_ring + (i + 1) % points_per_ring
+            indices.extend([a, b, b + points_per_ring, a + points_per_ring, -1])
+    indices.extend([top + i for i in cap] + [-1])
+    coord = Node("Coordinate", {"point": pts}, node.source)
+    return Node("IndexedFaceSet", {"creaseAngle": 0.61, "coord": coord, "coordIndex": indices},
+                node.source, node.name or "RoundedHousing")
+
+
+def read_proto(source, overrides=None):
     text = source.read_text(encoding="utf-8")
     if source.stem in TREES:
         # The outer Solid supplies the trunk collider in B and D. D uses unburnt Sassafras.
@@ -133,8 +273,14 @@ def read_proto(source):
         text = re.sub(triple, "IS scale ", text)
         text = re.sub(r"%<\s*(?:if\s*\(!fields\.burnt\.value\)\s*\{|\})\s*>%", "", text)
     if "%<" in text:
+        defaults, field_types = _parse_proto_header(text, source)
+        text = _expand_js_template(source, text, defaults, field_types, overrides)
+    if "%<" in text:
         raise ValueError(f"Unrecognized Webots template expression in {source.name}")
     parser = Parser(text, source)
+    while parser.peek() == "EXTERNPROTO":
+        parser.take()
+        parser.atom()
     parser.take("PROTO")
     parser.take(source.stem)
     parser.take("[")
@@ -289,8 +435,9 @@ def texture_coordinates(node, points, faces, parameters):
         mins = [min(axis) for axis in zip(*points)]
         sizes = [max(axis) - low for axis, low in zip(zip(*points), mins)]
         first, second, _ = sorted(range(3), key=lambda i: -sizes[i])
-        uv = [((point[first] - mins[first]) / sizes[first],
-               (point[second] - mins[second]) / sizes[first]) for point in points]
+        span = sizes[first] or 1.0
+        uv = [((point[first] - mins[first]) / span,
+               (point[second] - mins[second]) / span) for point in points]
     if node.fields.get("texCoordIndex"):
         tex_faces = polygon_indices(node.fields["texCoordIndex"])
     else:
@@ -372,9 +519,19 @@ class StaticScene:
         self.protos = {}
 
     def proto_instance(self, node):
-        if node.kind not in self.protos:
-            self.protos[node.kind] = read_proto(self.project / "protos" / f"{node.kind}.proto")
-        body, defaults = self.protos[node.kind]
+        cache_key = node.kind
+        overrides = None
+        if node.kind == "RescueRoverWheel":
+            overrides = {"encoderName": node.fields.get("encoderName", "")}
+            cache_key = (node.kind, overrides["encoderName"])
+        elif node.kind == "RescueRoverBody":
+            overrides = {"stereoOnly": node.fields.get("stereoOnly", False)}
+            cache_key = (node.kind, overrides["stereoOnly"])
+        if cache_key not in self.protos:
+            self.protos[cache_key] = read_proto(
+                self.project / "protos" / f"{node.kind}.proto", overrides=overrides
+            )
+        body, defaults = self.protos[cache_key]
         fields = {**defaults, **node.fields}
         if node.kind == "Sassafras" and fields["burnt"]:
             raise ValueError("Export supports the unburnt Sassafras template used in D")
@@ -438,6 +595,11 @@ class StaticScene:
                     element(solid, "length", number_list((node.fields.get("height", 2) * scale[2],)))
             return
 
+        if node.kind == "BeveledBox":
+            node = beveled_box_node(node)
+        elif node.kind == "RoundedHousing":
+            node = rounded_housing_node(node)
+
         if node.kind == "Mesh":
             uri = self.asset(node, node.fields["url"][0])
         elif node.kind == "IndexedFaceSet":
@@ -475,6 +637,9 @@ class StaticScene:
                 raise ValueError(f"Expected {node.kind} with an explicit outer trunk collider")
             body, fields = self.proto_instance(node)
             yield from self.shapes(body, placement, parameters=fields)
+        elif node.kind == "RescueRoverBody":
+            body, fields = self.proto_instance(node)
+            yield from self.shapes(body, placement, collision=collision, parameters=fields)
         elif node.kind in {"Group", "Pose", "Transform", "Solid"}:
             relative = placement.child(node, parameters)
             for child in node.fields.get("children", []):

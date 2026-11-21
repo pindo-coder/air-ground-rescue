@@ -1,51 +1,93 @@
-# Gazebo Harmonic · D 山洪森林场景
+# Gazebo Harmonic + ROS 2 Jazzy · D 山洪森林场景完整迁移说明
 
-本分支从 Webots [`2a9eab7`](https://github.com/pindo-coder/webots-vision-rescue/commit/2a9eab7a815b9dc7b467b738b4a1767d92f7664d) 迁移 D 场景。迁移范围包括森林、冲沟、残留水面、废墟、伤员、移动漂木与碎石、小车和无人机。84 × 60 米地表保留 673 × 481 个原始高程点，显示与碰撞网格采用相同的高程和三角剖分。
+本分支已将 Webots `main`（至 `2721e96`）上的**全部核心算法、工业级四轮车/无人机外观与 6 张 PBR 贴图、微调航拍 YOLO11n v2 权重、全部回归测试**完整同步，并完成了面向 **Gazebo Sim Harmonic（8.15.0）+ ROS 2 Jazzy（`ros_gz_bridge`）** 的端到端适配：
 
-小车沿用该版本的差速底盘，支持速度控制。无人机在世界坐标高度 16 米沿原航线运动。光照、接触动力学和传感器噪声采用 Gazebo 中的近似配置。最新 Webots 四轮车、无人机外观和自主搜索、航测建图、空地融合及任务评测尚待迁移。相关算法文档见 [Webots 导航与救援说明](https://github.com/pindo-coder/webots-vision-rescue/blob/main/docs/UAV_NAVIGATION.md)。
+- **四轮滑移转向底盘（4WD）**：完整导出 `RescueRoverBody` + 4 个 `RescueRoverWheel`（轴距 `0.300 m`、轮距 `0.410 m`、轮径 `0.090 m`、底盘离地 `0.090 m`），与 VCTP 四轮精细几何 100% 一致。
+- **全量传感器补齐**：
+  - 地面车：`/rover/rgb`、`/rover/depth`、`/rover/chase_cam`、`/rover/lidar`（+ `/rover/lidar/points`）、ENU `/rover/imu`、`/rover/gps`（NavSat）、`/rover/odom`、`/rover/joint_states`（4 轮）、`/rover/contact`（评测专用）。
+  - 无人机：`/drone/rgb`、`/drone/depth`、`/drone/fpv_cam`、`/drone/gps`（NavSat，光心同位）、ENU `/drone/imu`。
+- **全链路算法栈**：无人机 0.5 m / 0.125 m 粗细建图 → Traversing Mars 双路线搜索 → DUCPP 价值导向斜拍补拍（支持 6-DoF 斜拍站位）→ VCTP + IGHA\* 混合全局规划 → 10 Hz 车载 LiDAR/RGB-D 局部避障 → PyTorch 多模态神经网络局部规划（BC + DAgger）→ 零泄漏 v2 航拍 YOLO11n + 车端复核与物资箱投送。
 
-## 构建
+---
 
-在 `feat/gazebo-models` 分支的仓库根目录，用 Python 安装构建依赖并生成场景。
+## 一、WSL2 Ubuntu 24.04 环境准备
+
+1. **安装 Gazebo Harmonic + ROS 2 Jazzy + `ros_gz_bridge`**（Ubuntu 24.04 LTS）：
+```bash
+sudo apt update
+sudo apt install -y \
+  ros-jazzy-ros-base \
+  ros-jazzy-ros-gz-bridge \
+  ros-jazzy-ros-gz-interfaces \
+  ros-jazzy-tf2-ros \
+  python3-gz-sim8 python3-gz-math7 python3-numpy
+```
+
+2. **创建与系统 ROS 2 共存的 Python 虚拟环境**（关键：`--system-site-packages` 让 `.venv` 直接读取 `rclpy` 和 `gz.sim8`）：
+```bash
+source /opt/ros/jazzy/setup.bash
+python3 -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -r requirements-build.txt -r requirements-search.txt -r requirements-search-yolo.txt
+.venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu124   # RTX 4060 GPU（或 cpu）
+.venv/bin/python -m pip install -r requirements-local-learning.txt
+.venv/bin/python tools/fetch_search_model.py
+```
+
+---
+
+## 二、构建并校验 D 场景 SDF 包
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-build.txt
 .venv/bin/python tools/build_search_worlds.py --case D
 .venv/bin/python tools/export_gazebo_d.py
+gz sdf -k gazebo/generated/D/search_d.sdf
 ```
 
-生成的 `gazebo/generated/D/` 包含 `search_d.sdf`、贴图、网格和运动脚本。换机器运行时复制整个目录。
+> 注：如果目标机器未安装 Node.js，`tools/webots_static_scene.py` 会自动读取 `gazebo/proto_cache/` 中随仓库预生成的模板展开快照，零外部依赖即可导出完整工业级载具与 PBR 贴图。
 
-## 启动
+---
 
-运行端使用 Gazebo Harmonic，已验证版本为 **Gazebo Sim 8.15.0**。运动脚本还依赖 Ubuntu 软件包 `python3-gz-sim8`、`python3-gz-math7` 和 `python3-numpy`。在完整场景包目录中执行以下命令。
+## 三、全链路运行命令速查
+
+运行前请先 `source /opt/ros/jazzy/setup.bash`：
 
 ```bash
-gz sdf -k search_d.sdf
-./run.sh
+# 1. 仅预览 Gazebo 场景（默认巡航 + WSLg 防多开锁）
+./gazebo/generated/D/run.sh
+
+# 2. 无人机全场航测 + DUCPP 价值导向斜拍补拍（生成 uav_map.npz + 0.125 m 细高程）
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode mapping --profile full --refinement-strategy route_value
+
+# 3. 定点闭环导航（VCTP + IGHA* / 可绕行障碍 detour / 封堵停车 block，复用已有航测图秒级启动）
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode navigation --profile full --goal valley --planner igha_vctp --obstacle detour \
+  --map-from runs/<你的航测目录>
+
+# 4. 纯 YOLO11n 空地协同双伤员救援投送全闭环（支持 --record-cameras 留证）
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode rescue --profile full --detector yolo --planner igha_vctp --max-victims 2 \
+  --record-cameras
+
+# 5. Gazebo 车端神经网络局部规划（BC + DAgger 采集与训练）
+.venv/bin/python gazebo/train_gazebo_local_policy.py \
+  --map-from runs/<你的航测目录> --profile full --goals valley --obstacles none detour --dagger-rounds 2 --headless
+
+# 6. 使用训练好的神经网络局部规划跑全场救援闭环
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode rescue --profile full --detector yolo --planner igha_vctp \
+  --local-policy neural --local-checkpoint runs/<训练目录>/dagger_r2_policy.pt \
+  --map-from runs/<你的航测目录>
 ```
 
-WSL 通过 WSLg 打开图形窗口。启动脚本会设置运动模块路径和 WSLg 显示环境。仅运行服务端时用 `./run.sh -s`。
+---
 
-## 视角与控制
+## 四、话题与权限隔离清单
 
-Gazebo 界面包含 3D 斜视全景、小车前视和无人机下视。图像面板可从话题列表选择 RGB 或深度，深度以灰度显示距离。小车两个相机位置和朝向相同。
+详细 ROS 2 节点设计、坐标系转换与话题映射见 [ROS 2 Jazzy 运行时文档](ros2_rescue/README.md)。
 
-| 平台 | 彩色话题 | 深度话题 | 分辨率 |
-| --- | --- | --- | --- |
-| 小车前视 | `/rover/rgb` | `/rover/depth` | 320 × 240 |
-| 无人机下视 | `/drone/rgb` | `/drone/depth` | 640 × 480 |
-
-小车接收 Gazebo Transport 的 `/rover/cmd_vel`，并发布 `/rover/odom`、`/rover/joint_states`、`/rover/lidar` 和 `/rover/imu`。在另一个终端发送前进指令，再发送零速度停车。
-
+- 严格遵守零真值泄漏红线：`/world/search_d/pose/info`（桥接至 `/eval/world_poses`）与 `/rover/contact`（桥接至 `/eval/rover_contact`）**仅由独立评测节点 `evaluator_node.py` 订阅**，建图与车端规划节点绝不读取任何仿真真值。
+- 本地回归测试：
 ```bash
-gz topic -t /rover/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.25}'
-gz topic -t /rover/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.0}'
+python3 -m unittest discover -s tests -p 'test_gazebo_*.py' -v
 ```
-
-同机运行多个 Gazebo 世界时，为 D 场景启动终端和读取话题的终端设置相同的 `GZ_PARTITION`，避免话题串到其他实例。WSLg 遇到 `D3D12: Removing Device` 时，先退出同一场景的其他 Gazebo 窗口和残留服务端，再重新启动。
-
-## 验证
-
-在仓库根目录运行 `python3 -m unittest discover -s tests -p 'test_gazebo_*_export.py'`。在 WSLg 上已验证四路 RGB 与深度话题出帧、小车响应速度指令、无人机沿航线移动和两种动态障碍的轨迹。

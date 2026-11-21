@@ -16,13 +16,29 @@ ACTION_SCALE = np.array([MAX_SPEED, MAX_ANGULAR_SPEED], dtype=np.float32)
 LOOK_ANGLES = np.linspace(-math.pi / 3.0, math.pi / 3.0, 5)
 
 
-def encode_rgbd(bgra, depth):
-    """Sample aligned R, G, B, optical-axis depth and validity."""
+def encode_rgbd(image, depth, encoding="bgra"):
+    """Sample aligned R, G, B, optical-axis depth and validity.
+
+    Supports Webots 4-channel BGRA buffers (default) as well as ROS 2 / Gazebo
+    3-channel RGB/BGR and 4-channel RGBA images.
+    """
     height, width = depth.shape
-    pixels = np.frombuffer(bgra, dtype=np.uint8).reshape(height, width, 4)
+    enc = encoding.lower()
+    channels = 3 if enc in ("rgb", "rgb8", "bgr", "bgr8") else 4
+    if isinstance(image, np.ndarray):
+        pixels = image.reshape(height, width, -1)
+        channels = pixels.shape[2]
+    else:
+        raw = np.frombuffer(image, dtype=np.uint8)
+        channels = raw.size // (height * width)
+        pixels = raw.reshape(height, width, channels)
     rows = np.linspace(0, height - 1, RGBD_SHAPE[1]).round().astype(int)
     cols = np.linspace(0, width - 1, RGBD_SHAPE[2]).round().astype(int)
-    rgb = pixels[rows[:, None], cols[None, :], 2::-1]
+    sampled = pixels[rows[:, None], cols[None, :]]
+    if enc in ("rgb", "rgb8", "rgba", "rgba8"):
+        rgb = sampled[..., :3]
+    else:
+        rgb = sampled[..., 2::-1]
     d = np.asarray(depth[rows[:, None], cols[None, :]], dtype=np.float32)
     valid = np.isfinite(d) & (d >= 0.20)
     frame = np.empty(RGBD_SHAPE, dtype=np.float32)

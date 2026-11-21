@@ -113,42 +113,15 @@ def _bin_points_2d(body_xy, enu_xy, cell_size=0.10, min_count=2):
     return b_out, e_out
 
 
-def extract_lidar_obstacles(layer_ranges, pose_xyz, rpy, grid, ground_z_m,
-                            z_bias=0.0, max_range=5.0,
-                            elevations=LIDAR_LAYER_ELEVATIONS_RAD):
-    """Extract obstacle points from multi-layer LiDAR, rejecting smooth sloped ground.
-
-    Returns (body_xy, enu_xy) arrays of shape (N, 2).
-    """
+def _filter_lidar_body_points(body, pose_xyz, rpy, grid, ground_z_m, z_bias=0.0):
+    """Project body-frame LiDAR returns to ENU, reject smooth sloped ground, and bin."""
+    if len(body) == 0:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
     pose_xyz = np.asarray(pose_xyz, dtype=float)
     roll, pitch, yaw = map(float, rpy)
     r_grav = gravity_rotation(roll, pitch)
     r_yaw = rotation_2d(yaw)
 
-    body_chunks = []
-    for ranges, el in zip(layer_ranges, elevations):
-        arr = np.asarray(ranges, dtype=float).ravel()
-        n = arr.size
-        if n == 0:
-            continue
-        angles = np.linspace(math.pi, -math.pi, n, endpoint=False)
-        valid = np.isfinite(arr) & (arr > 0.28) & (arr < min(max_range, 7.8))
-        if not np.any(valid):
-            continue
-        r = arr[valid]
-        az = angles[valid]
-        ce, se = math.cos(el), math.sin(el)
-        bx = r * ce * np.cos(az)
-        by = r * ce * np.sin(az)
-        bz = LIDAR_OFFSET_BODY[2] + r * se
-        not_self = ~((np.abs(bx) < 0.32) & (np.abs(by) < 0.27))
-        if np.any(not_self):
-            body_chunks.append(np.column_stack((bx[not_self], by[not_self], bz[not_self])))
-
-    if not body_chunks:
-        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
-
-    body = np.vstack(body_chunks)
     grav = body @ r_grav.T
     enu_xy = pose_xyz[:2] + grav[:, :2] @ r_yaw.T
     enu_z = pose_xyz[2] + grav[:, 2]
@@ -174,6 +147,65 @@ def extract_lidar_obstacles(layer_ranges, pose_xyz, rpy, grid, ground_z_m,
             return np.vstack((close_b, far_b)), np.vstack((close_e, far_e))
         return close_b, close_e
     return far_b, far_e
+
+
+def extract_pointcloud_obstacles(lidar_points_xyz, pose_xyz, rpy, grid, ground_z_m,
+                                 z_bias=0.0, max_range=5.0,
+                                 sensor_offset_body=LIDAR_OFFSET_BODY):
+    """Extract obstacles from a 3D LiDAR point cloud in sensor FLU frame (e.g. ROS 2 PointCloud2)."""
+    pts = np.asarray(lidar_points_xyz, dtype=float).reshape(-1, 3)
+    if len(pts) == 0:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
+    finite = np.isfinite(pts).all(axis=1)
+    pts = pts[finite]
+    if len(pts) == 0:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
+    dist = np.linalg.norm(pts, axis=1)
+    in_range = (dist > 0.28) & (dist < min(max_range, 7.8))
+    pts = pts[in_range]
+    if len(pts) == 0:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
+    body = pts + np.asarray(sensor_offset_body, dtype=float)
+    not_self = ~((np.abs(body[:, 0]) < 0.32) & (np.abs(body[:, 1]) < 0.27))
+    return _filter_lidar_body_points(body[not_self], pose_xyz, rpy, grid, ground_z_m, z_bias=z_bias)
+
+
+def extract_lidar_obstacles(layer_ranges, pose_xyz, rpy, grid, ground_z_m,
+                            z_bias=0.0, max_range=5.0,
+                            elevations=LIDAR_LAYER_ELEVATIONS_RAD,
+                            azimuth_order="cw"):
+    """Extract obstacle points from multi-layer LiDAR, rejecting smooth sloped ground.
+
+    Returns (body_xy, enu_xy) arrays of shape (N, 2).
+    `azimuth_order='cw'` matches Webots (pi -> -pi); `'ccw'` matches Gazebo (-pi -> +pi).
+    """
+    body_chunks = []
+    for ranges, el in zip(layer_ranges, elevations):
+        arr = np.asarray(ranges, dtype=float).ravel()
+        n = arr.size
+        if n == 0:
+            continue
+        if azimuth_order == "ccw":
+            angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
+        else:
+            angles = np.linspace(math.pi, -math.pi, n, endpoint=False)
+        valid = np.isfinite(arr) & (arr > 0.28) & (arr < min(max_range, 7.8))
+        if not np.any(valid):
+            continue
+        r = arr[valid]
+        az = angles[valid]
+        ce, se = math.cos(el), math.sin(el)
+        bx = LIDAR_OFFSET_BODY[0] + r * ce * np.cos(az)
+        by = LIDAR_OFFSET_BODY[1] + r * ce * np.sin(az)
+        bz = LIDAR_OFFSET_BODY[2] + r * se
+        not_self = ~((np.abs(bx) < 0.32) & (np.abs(by) < 0.27))
+        if np.any(not_self):
+            body_chunks.append(np.column_stack((bx[not_self], by[not_self], bz[not_self])))
+
+    if not body_chunks:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
+
+    return _filter_lidar_body_points(np.vstack(body_chunks), pose_xyz, rpy, grid, ground_z_m, z_bias=z_bias)
 
 
 def extract_rgbd_obstacles(depth_image, pose_xyz, rpy, grid, ground_z_m,

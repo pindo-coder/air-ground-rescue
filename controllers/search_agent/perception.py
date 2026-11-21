@@ -9,10 +9,10 @@ from mapping import rotation, wrap
 from scipy.optimize import linear_sum_assignment
 
 
-def project_depth(uvd, width, height, roll=0., pitch=0.):
+def project_depth(uvd, width, height, roll=0., pitch=0., field_of_view=math.pi/2):
     """Aligned depth pixels -> gravity-aligned body coordinates, without yaw."""
     uvd=np.asarray(uvd,dtype=float).reshape(-1,3)
-    u,v,d=uvd.T;focal=width/2
+    u,v,d=uvd.T;focal=width/(2.0*math.tan(field_of_view/2.0))
     points=np.column_stack((d,-(u-(width-1)/2)*d/focal,-(v-(height-1)/2)*d/focal))
     def ry(angle):
         c,s=math.cos(angle),math.sin(angle)
