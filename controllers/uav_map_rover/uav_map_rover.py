@@ -140,8 +140,11 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
     lidar = robot.getDevice("lidar")
     depth_cam = robot.getDevice("depth")
     rgb_cam = robot.getDevice("rgb")
+    chase_cam = robot.getDevice("rover_chase_cam")
     for device in (gps, imu, *encoders, lidar, depth_cam, rgb_cam):
         device.enable(period_ms)
+    if chase_cam is not None:
+        chase_cam.enable(200)
 
     # Allow 3 ticks for onboard sensors to deliver valid frames at 10 Hz.
     init_gps = []
@@ -361,8 +364,11 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
     lidar = robot.getDevice("lidar")
     depth_cam = robot.getDevice("depth")
     rgb_cam = robot.getDevice("rgb")
+    chase_cam = robot.getDevice("rover_chase_cam")
     for device in (gps, imu, *encoders, lidar, depth_cam, rgb_cam):
         device.enable(period_ms)
+    if chase_cam is not None:
+        chase_cam.enable(200)
 
     init_gps = []
     init_rpy = None
@@ -396,6 +402,26 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
     rgb_h, rgb_w = rgb_cam.getHeight(), rgb_cam.getWidth()
     depth_fov = depth_cam.getFov()
     num_layers = lidar.getNumberOfLayers()
+    record_video = os.environ.get("UAV_RECORD_VIDEO") == "1"
+    fpv_dir = rover_dir / "fpv_frames"
+    chase_dir = rover_dir / "chase_frames"
+    if record_video:
+        fpv_dir.mkdir(parents=True, exist_ok=True)
+        if chase_cam is not None:
+            chase_dir.mkdir(parents=True, exist_ok=True)
+    cam_rec_idx = 0
+    cam_rec_step = 0
+
+    def maybe_record_rover_cams():
+        nonlocal cam_rec_idx, cam_rec_step
+        if not record_video:
+            return
+        cam_rec_step += 1
+        if cam_rec_step % 2 == 0:
+            rgb_cam.saveImage(str(fpv_dir / f"{cam_rec_idx:05d}.jpg"), 85)
+            if chase_cam is not None:
+                chase_cam.saveImage(str(chase_dir / f"{cam_rec_idx:05d}.jpg"), 85)
+            cam_rec_idx += 1
 
     rescue_events = []
     leg_records = []
@@ -500,6 +526,7 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                         routes_history.append(controller.route_xy.tolist())
 
                     publish_state(controller.state, vid)
+                    maybe_record_rover_cams()
                     if tick % 2 == 0 or controller.report.status != "RUNNING":
                         telemetry.write(json.dumps(dict(
                             time_s=round(now, 3),
@@ -567,6 +594,7 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     motors[0].setVelocity(l_r)
                     motors[1].setVelocity(r_r)
                     publish_state("FACE_VICTIM", vid)
+                    maybe_record_rover_cams()
 
                 for motor in motors:
                     motor.setVelocity(0.0)
@@ -582,6 +610,7 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     wheels = np.asarray([enc.getValue() for enc in encoders], dtype=float)
                     pose_xyz, yaw = estimator.update(g, rpy, wheels, dt, grid, layers["ground_z_m"])
                     publish_state("VERIFY_AND_DELIVER", vid)
+                    maybe_record_rover_cams()
                     elapsed_still = now - settle_start
                     if elapsed_still >= 0.4 and int(round(elapsed_still * 10)) % 4 == 0:
                         depth_img = np.asarray(depth_cam.getRangeImage(), dtype=np.float32).reshape(depth_h, depth_w).copy()

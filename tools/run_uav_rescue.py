@@ -362,7 +362,44 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
 
     trail = []
     written = 0
-    for row in meta_rows:
+
+    # Phase 1 (optional): Drone flight video from drone_fpv_cam + downward aerial_rgb PiP.
+    drone_chase_dir = folder / "evaluation/drone_chase_frames"
+    nadir_dir = folder / "frames"
+    if drone_chase_dir.is_dir():
+        drone_files = sorted(drone_chase_dir.glob("*.jpg"))
+        nadir_files = sorted(nadir_dir.glob("*.jpg")) if nadir_dir.is_dir() else []
+        for idx, dpath in enumerate(drone_files):
+            dframe = cv2.imread(str(dpath))
+            if dframe is None:
+                continue
+            dframe = cv2.resize(dframe, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
+            overlay = dframe.copy()
+            cv2.rectangle(overlay, (0, 0), (out_w, 54), (16, 24, 34), -1)
+            dframe = cv2.addWeighted(overlay, 0.72, dframe, 0.28, 0.0)
+            hud_uav = (
+                f"Phase 1: UAV Aerial Mapping & Victim Search  |  "
+                f"t={idx * 0.2:.1f}s ({video_speed:.0f}x)  |  Camera: drone_fpv_cam + aerial_rgb"
+            )
+            cv2.putText(dframe, hud_uav, (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (238, 246, 252), 2, cv2.LINE_AA)
+            if nadir_files:
+                n_idx = min(len(nadir_files) - 1, idx // 5)
+                nimg = cv2.imread(str(nadir_files[n_idx]))
+                if nimg is not None:
+                    nw, nh = 280, 210
+                    nimg = cv2.resize(nimg, (nw, nh), interpolation=cv2.INTER_AREA)
+                    cv2.rectangle(nimg, (0, 0), (nw - 1, nh - 1), (210, 225, 235), 2)
+                    nx0, ny0 = 18, out_h - nh - 18
+                    dframe[ny0:ny0 + nh, nx0:nx0 + nw] = nimg
+                    cv2.putText(dframe, "UAV Nadir RGB", (nx0 + 6, ny0 - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.50, (240, 248, 255), 1, cv2.LINE_AA)
+            writer.write(dframe)
+            written += 1
+
+    # Phase 2: Rover driving & rescue video + live Rover FPV PiP + live UAV Mini-Map PiP.
+    fpv_dir = folder / "rover/fpv_frames"
+    fpv_files = sorted(fpv_dir.glob("*.jpg")) if fpv_dir.is_dir() else []
+    for row_idx, row in enumerate(meta_rows):
         fpath = frames_dir / f"{row['frame']:05d}.jpg"
         if not fpath.is_file():
             continue
@@ -383,6 +420,19 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         )
         cv2.putText(frame, hud1, (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (238, 246, 252), 2, cv2.LINE_AA)
 
+        # Live Rover Front FPV Camera PiP in bottom-left corner.
+        if fpv_files:
+            f_idx = min(len(fpv_files) - 1, int(round(row_idx * len(fpv_files) / max(1, len(meta_rows)))))
+            fpv_img = cv2.imread(str(fpv_files[f_idx]))
+            if fpv_img is not None:
+                fw, fh = 280, 210
+                fpv_img = cv2.resize(fpv_img, (fw, fh), interpolation=cv2.INTER_AREA)
+                cv2.rectangle(fpv_img, (0, 0), (fw - 1, fh - 1), (210, 225, 235), 2)
+                fx0, fy0 = 18, out_h - fh - 18
+                frame[fy0:fy0 + fh, fx0:fx0 + fw] = fpv_img
+                cv2.putText(frame, "Rover Front FPV", (fx0 + 6, fy0 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (240, 248, 255), 1, cv2.LINE_AA)
+
         # Live UAV mini-map PiP in bottom-right corner.
         pip = base_pip.copy()
         trail.append(to_pip((row["x"], row["y"])))
@@ -400,7 +450,32 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
 
     writer.release()
     if written > 0 and video_path.is_file() and video_path.stat().st_size > 1024:
+        # Save a permanent 2x2 showcase of the drone and rover cameras before cleaning temp frames.
+        chase_dir = folder / "rover/chase_frames"
+        tiles = []
+        for label, directory in (
+            ("Drone 3rd-Person (drone_fpv_cam)", drone_chase_dir),
+            ("Drone Downward (aerial_rgb)", nadir_dir),
+            ("Rover 3rd-Person (rover_chase_cam)", chase_dir),
+            ("Rover Front FPV (rgb)", fpv_dir),
+        ):
+            files = sorted(directory.glob("*.jpg")) if directory.is_dir() else []
+            if files:
+                img = cv2.imread(str(files[len(files) // 2]))
+                tile = cv2.resize(img, (480, 270), interpolation=cv2.INTER_AREA) if img is not None else np.zeros((270, 480, 3), dtype=np.uint8)
+            else:
+                tile = np.full((270, 480, 3), 24, dtype=np.uint8)
+            cv2.rectangle(tile, (0, 0), (480, 30), (16, 24, 34), -1)
+            cv2.putText(tile, label, (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (240, 248, 255), 1, cv2.LINE_AA)
+            tiles.append(tile)
+        if len(tiles) == 4:
+            grid_4 = np.vstack([np.hstack(tiles[:2]), np.hstack(tiles[2:])])
+            cv2.imwrite(str(folder / "evaluation/four_cameras_preview.jpg"), grid_4, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
         shutil.rmtree(frames_dir, ignore_errors=True)
+        shutil.rmtree(drone_chase_dir, ignore_errors=True)
+        shutil.rmtree(fpv_dir, ignore_errors=True)
+        shutil.rmtree(chase_dir, ignore_errors=True)
         print(
             f"[Run rescue] Assembled video: {video_path} ({written} frames, {fps:.0f} fps, "
             f"codec={used_codec}, {video_path.stat().st_size / 1048576:.2f} MB)",

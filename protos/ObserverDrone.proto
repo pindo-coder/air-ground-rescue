@@ -510,9 +510,11 @@ PROTO ObserverDrone [
         ]
       }
 
-      # === 7. ONBOARD SENSORS & RADIO (100% UNCHANGED) ===
+      # === 7. ONBOARD SENSORS & RADIO (100% UNCHANGED) + VISUALIZATION CHASE CAM ===
       Camera { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_rgb"
                width 640 height 480 fieldOfView 1.1 near .05 far 30 noise .003 }
+      Camera { translation -1.10 0 0.48 rotation 0 1 0 0.46 name "drone_fpv_cam"
+               width 480 height 270 fieldOfView 1.15 near .1 far 120 }
       RangeFinder { translation 0 0 -.20 rotation 0 1 0 1.5707963268 name "aerial_depth"
                     width 640 height 480 fieldOfView 1.1 minRange .2 maxRange 24 noise .002 }
       GPS { translation 0 0 -.20 name "aerial_gps" accuracy .04 noiseCorrelation .2 }

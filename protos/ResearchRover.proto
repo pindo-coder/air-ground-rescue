@@ -30,6 +30,16 @@ PROTO ResearchRover [
         near .05
         far 12
       }
+      Camera {
+        translation -1.35 0 0.92
+        rotation 0 1 0 0.42
+        name "rover_chase_cam"
+        width 480
+        height 270
+        fieldOfView 1.15
+        near .1
+        far 60
+      }
       RangeFinder {
         translation 0.26 0 0.30
         rotation 0 1 0 0.08

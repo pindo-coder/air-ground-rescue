@@ -38,6 +38,14 @@ def main():
     period_ms = 200
     for sensor in (camera, depth, gps, imu):
         sensor.enable(1000)
+    fpv_cam = robot.getDevice("drone_fpv_cam")
+    if fpv_cam is not None:
+        fpv_cam.enable(period_ms)
+    record_video = os.environ.get("UAV_RECORD_VIDEO") == "1"
+    drone_video_dir = folder / "evaluation/drone_chase_frames"
+    if record_video and fpv_cam is not None:
+        drone_video_dir.mkdir(parents=True, exist_ok=True)
+    drone_video_idx = 0
     width, height = depth.getWidth(), depth.getHeight()
     fov, min_range, max_range = depth.getFov(), depth.getMinRange(), depth.getMaxRange()
     stride = settings.get("sample_stride_px", 4)
@@ -64,6 +72,9 @@ def main():
     while robot.step(period_ms) != -1:
         tick += 1
         now = robot.getTime()
+        if record_video and fpv_cam is not None:
+            fpv_cam.saveImage(str(drone_video_dir / f"{drone_video_idx:05d}.jpg"), 85)
+            drone_video_idx += 1
         if tick % 5 == 0 and (baseline is None or tick // 5 in capture_times):
             origin = np.asarray(gps.getValues())
             attitude = np.asarray(imu.getRollPitchYaw())

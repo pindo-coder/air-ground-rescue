@@ -101,7 +101,7 @@ python -m venv .venv
 | --- | --- | --- |
 | `protos/RescueRoverBody.proto` | 工业级 UGV 底盘与上装：3K 碳纤维主甲板、CNC 拉丝枪灰铝合金护框、外露双叉臂悬架与橙色螺旋减震器、前部防撞管杠 + 双 LED 探照灯舱、带锁扣防水 Pelican 器材箱、多面体传感器塔（3 层 360° 光学 LiDAR 窗 + 前置 RGB-D 双目舱 + 后部 UHF 天线 + 警示灯与 `UGV-01` 标识）。已修复首版渲染中箱盖浮空缝、标识镜像、天线穿模锁扣与灯舱干涉问题。 | 轴距 `0.30 m`、轮距 `0.41 m`、轮半径 `0.09 m`、离地 `0.09 m`、相机 `[0.26, 0, 0.30]`（320×240, FOV $\pi/2$, 下倾 `0.08 rad`）、LiDAR 高度与视野 100% 保留。 |
 | `protos/RescueRoverWheel.proto` | 深齿越野橡胶胎面 + 防脱轮毂（Beadlock）与金属螺栓环。 | 碰撞体圆柱半径 `0.09 m`、摩擦属性与电机绑定不变。 |
-| `protos/ObserverDrone.proto` | Matrice 级工业四旋翼：3K 碳纤维上下中心板 + 拉丝枪灰飞控核心舱、碳纤维管状机臂与外转子电机座、高展弦比渐变碳纤桨叶、三轴下视云台横梁与光学双目载荷舱、轻量化碳纤起落架滑橇与 `UAV-01` 顶板标识。 | 下视 RGB-D（640×480, FOV `1.1 rad`, 载荷中心 `z = -0.20 m`）光学视野 100% 无起落架/机臂自遮挡。 |
+| `protos/ObserverDrone.proto` | Matrice 级工业四旋翼：3K 碳纤维上下中心板 + 拉丝枪灰飞控核心舱、碳纤维管状机臂与外转子电机座、高展弦比渐变碳纤桨叶、三轴下视云台横梁与光学双目载荷舱、轻量化碳纤起落架滑橇与 `UAV-01` 顶板标识。**另加装第三人称跟飞相机 `drone_fpv_cam`（480×270）**，配合 `ResearchRover.proto` 新增的**第三人称跟车相机 `rover_chase_cam`（480×270）**与车头前视 `rgb`，在 Webots 实时窗口及 `--record-video` 双阶段录屏中可直接观看无人机飞行与小车行驶全过程。 | 下视 RGB-D（640×480, FOV `1.1 rad`, 载荷中心 `z = -0.20 m`）光学视野 100% 无起落架/机臂自遮挡；新增观察相机无物理碰撞体、无遮挡网格。 |
 | `protos/BeveledBox.proto`、`RoundedHousing.proto`、`protos/textures/*.png` | 程序化倒角几何体 + 6 张无缝高分 PBR 贴图：`carbon_weave_base.png` / `carbon_weave_normal.png`、`brushed_metal_base.png` / `brushed_metal_normal.png`、`rescue_rover_id.png`、`rescue_drone_id.png`。 | 对比验收图见 `runs/vehicle_redesign_final_20261121_141232/vehicle_showcase.jpg`。 |
 
 ---
