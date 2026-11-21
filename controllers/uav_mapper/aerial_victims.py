@@ -100,7 +100,7 @@ class AerialVictimTracker:
         return confirmed
 
 
-def detect_victims_from_saved_survey(run_folder, detector_mode="surrogate_rgbd", min_views=2):
+def detect_victims_from_saved_survey(run_folder, detector_mode="surrogate_rgbd", min_views=2, transform_bgr=None):
     """Run sensor-only aerial person detection on saved observations.npz + frames/."""
     run_folder = Path(run_folder)
     common = json.loads((ROOT / "config/search/common.json").read_text(encoding="utf-8"))
@@ -130,6 +130,8 @@ def detect_victims_from_saved_survey(run_folder, detector_mode="surrogate_rgbd",
         bgr = cv2.imread(str(frame_path))
         if bgr is None:
             continue
+        if transform_bgr is not None:
+            bgr = transform_bgr(bgr)
         scanned_frames += 1
         full_depth = cv2.resize(depths[idx], (width, height), interpolation=cv2.INTER_NEAREST)
         cands = aerial_candidates(detector, bgr, full_depth, gps[idx], att[idx], fov)

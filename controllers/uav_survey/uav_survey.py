@@ -297,7 +297,11 @@ def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_ob
     eval_dir = folder / "evaluation"
     eval_dir.mkdir(parents=True, exist_ok=True)
     common = json.loads((ROOT / "config/search/common.json").read_text(encoding="utf-8"))
-    targets = terrain["victims"]
+    override_file = eval_dir / "truth_override.json"
+    if override_file.is_file():
+        targets = json.loads(override_file.read_text(encoding="utf-8"))["victims"]
+    else:
+        targets = terrain["victims"]
     true_points = np.array([t["xy"] for t in targets], dtype=float)
     report_tol = float(terrain.get("report_tolerance_m", 1.0))
     delivery_tol = float(terrain.get("delivery_tolerance_m", 1.8))

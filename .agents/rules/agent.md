@@ -108,37 +108,35 @@ python -m venv .venv
 
 ## 七、零泄漏航拍 YOLO 微调与空地协同“人即终点”救援投送闭环
 
-### 1. 零泄漏多视角数据集采集与 YOLO11n 微调
-- **痛点**：原受控检测器 `surrogate_rgbd` 本质为“深蓝上衣颜色 + 尺寸”规则块，无法作为通用视觉模型；而未微调的通用 COCO `models/yolo11n.pt` 在 19 m 俯拍平躺伤员（仅约 25 px）上检出率为 `0/3`。
-- **零泄漏采集（`controllers/yolo_dataset_collector/yolo_dataset_collector.py`、`tools/collect_yolo_dataset.py`）**：
-  - **严格排除 D 场景**：仅在 Webots **A + B 场景**采训练集（**496 张**：260 航拍正样本 + 90 航拍纯背景难负样本 + 110 车载正样本 + 36 车载难负样本），在独立地形 **C 场景**采验证集（**175 张**：90+30 航拍、40+15 车载）；每个场景在多处地形随机额外布置 5 名不同姿势/外观伤员，并移出伤员采集纯倒塌房屋/倒木/岩石/树影/灌木难负样本。
-  - **深度遮挡校验自动标注**：将伤员 3D 骨架关键点投影至相机像素，并与 RangeFinder 实测深度逐点比对（过滤被树冠完全遮挡的歧义帧），生成像素级紧致 YOLO 标注框（目视抽检图 `runs/yolo_victim_dataset/preview_labels.jpg` 16/16 精准框中）。
-- **微调训练（`tools/train_yolo_victim.py`）**：基于 `models/yolo11n.pt` 单类微调 35 轮（`imgsz=640`, `AdamW`, `lr0=0.0025`, 强增强 `hsv_h=0.18, hsv_s=0.65, hsv_v=0.45, degrees=180.0, flipud=0.5, fliplr=0.5, mosaic=0.8`），导出 `models/yolo11n_victim.pt`（5.49 MB；C 场景验证 `Recall=0.695`、`mAP@50=0.613`，CPU 推理 `19 ms/帧`）。
-- **严格留出 D 场景 192 帧真实航拍 A/B 对比**：
+### 1. 零泄漏多视角数据集采集与 YOLO11n v2 全色域微调
+- **痛点**：原受控检测器 `surrogate_rgbd` 本质为“深蓝上衣颜色 + 尺寸”规则块，换装即 `0/3`；未微调通用 COCO `models/yolo11n.pt` 在 19 m 俯拍平躺伤员（仅约 25 px）上检出率为 `0/3`；首版微调 v1 在极端 `+60°` 色相偏移或纯灰度图上高空置信度会明显下降。
+- **v2 零泄漏随机位置 + 16 色换装采集（`controllers/yolo_dataset_collector/yolo_dataset_collector.py`、`tools/collect_yolo_dataset.py`）**：
+  - **严格排除 D 场景**：仅在 Webots **A + B 场景**采训练集（**525 张**：340 多色随机位置航拍正样本 + 110 航拍纯背景难负样本 + 75 张纯灰度复制样本），在独立地形 **C 场景**采验证集（**140 张**：105 正 + 35 难负）；每 4 帧动态将全部 6 名伤员随机刷新至新地形点、新坡面朝向，并实时随机切换 **16 种上衣 PBR 颜色（红、橙、黄、绿、橄榄、白灰、炭黑、深蓝、天蓝、酒红、棕、紫等）与 8 种裤子颜色**。
+  - **深度遮挡校验自动标注**：将伤员 3D 骨架关键点投影至相机像素，与 RangeFinder 实测深度逐点比对过滤完全树冠遮挡帧，生成紧致 YOLO 标注框（目视抽检见 `runs/yolo_victim_dataset_v2/preview_labels.jpg`）。
+- **v2 热启动微调（`tools/train_yolo_victim.py`）**：从 v1 权重热启动 25 轮（`imgsz=640`, `AdamW`, `lr0=0.0018`, `hsv_h=0.35`, `degrees=180.0`, `flipud=0.5`, `mosaic=0.8`），导出新版 `models/yolo11n_victim.pt`（5.49 MB）。C 场景留出验证集跃升至 **`Precision = 0.887`、`Recall = 0.786`、`mAP@50 = 0.862`、`mAP@50-95 = 0.533`**（单类高空部署阈值校准为 `conf = 0.50`）。
+- **严格留出 D 场景 192 帧真实航拍三重压力对照**：
 
-| 指标 | 未微调 COCO `yolo11n.pt` | **微调 `yolo11n_victim.pt`** | 受控规则 `surrogate_rgbd`（参考） |
-| --- | --- | --- | --- |
-| 192 帧 CPU 推理总耗时 | `25.67 s`（4 旋转） | **`5.13 s`（提速 5.0×）** | — |
-| 伤员多帧检出数 / 误报数 | `0 / 3` · 0 误报 | **`3 / 3` · 0 误报** | `3 / 3` · 0 误报 |
-| 伤员 1 / 2 / 3 ENU 误差 | 漏检 | **`0.161 m` / `0.029 m` / `0.166 m`** | `0.180 m` / `0.326 m` / `0.190 m` |
-| **航拍 ENU 定位 RMSE** | — | **`0.134 m`（13.4 cm）** | `0.241 m` |
+| 测试条件（192 帧留出 D 航拍） | 未微调 COCO `yolo11n.pt` | **v2 微调 `yolo11n_victim.pt`（`conf=0.50`）** |
+| --- | --- | --- |
+| 原图（`orig`） | `0 / 3`（24.80 s） | **`3 / 3` · `0` 误报 · RMSE `0.117 m`**（`5.24 s`，提速 4.7×） |
+| 极端 `+60°` 色相偏移（蓝衣变红紫） | — | **`3 / 3` · `0` 误报 · RMSE `0.103 m`**（`5.62 s`） |
+| **纯灰度图（完全剥离颜色信息）** | — | **`3 / 3` · `0` 误报 · RMSE `0.092 m`**（`5.14 s`） |
 
 - **空地双视角 YOLO 分工（`controllers/search_agent/perception.py`）**：
-  - `PersonDetector("yolo", ROOT, max_depth=...)` 在航拍视角（`max_depth >= 12.0`）自动加载微调专精模型 **`models/yolo11n_victim.pt`**（单次前向）；在地面近景视角（`max_depth < 12.0`）自动加载通用 **`models/yolo11n.pt`**（实测对侧面、正头顶及 `+60°` 色相偏移/纯灰度图均保持 `0.41–0.81` 稳定检出）。支持 `UAV_YOLO_WEIGHTS` 环境变量覆写以便 A/B 测试。
+  - `PersonDetector("yolo", ROOT, max_depth=...)` 在航拍视角（`max_depth >= 12.0`）自动加载微调专精模型 **`models/yolo11n_victim.pt`**（单次前向，`conf=0.50`）；在地面近景视角（`max_depth < 12.0`）自动加载通用 **`models/yolo11n.pt`**（侧面/正头顶/变色/灰度均稳定检出 `0.41–0.81`）。支持 `UAV_YOLO_WEIGHTS` 环境变量覆写以便 A/B 测试。
 
-### 2. 空地协同“人即终点”救援投送与录屏闭环
+### 2. 空地协同“人即终点”救援投送、伤员随机刷新与录屏闭环
 - **核心模块**：`controllers/uav_mapper/aerial_victims.py`、`controllers/uav_map_rover/rescue_mission.py`、`uav_map_rover.py`（`run_rescue_mission`）、`controllers/uav_survey/uav_survey.py`（`_evaluate_rescue`）、`tools/run_uav_rescue.py`、`start_uav_rescue.cmd`。
+- **支持伤员位置与服装随机刷新**：`tools/run_uav_rescue.py` 新增 `--random-victims` / `--victim-seed <seed>` / `--random-clothing`（及 `--nadir-only` 快速全图重飞）。启动前在 D 场景可通行坡度（`< 14.5°`）、避开树干/灌木/房屋/出生点的位置随机生成 3 名伤员（可选随机非蓝服装），真值仅写入评测专属 `evaluation/truth_override.json`（控制器完全不可见），强制无人机全新起飞实检。
 - **完整执行链路（全程零真值输入）**：
   1. **空中检人聚类**：`AerialVictimTracker` 对无人机俯拍 RGB-D 帧执行检测与 ENU 反投影，用 `covariance_intersection` 多帧聚类、过滤单帧噪点（`min_views=2`），输出 `aerial_victims.json`。
   2. **动态安全停靠点与多目标调度**：`select_victim_approach_point` 绝不压向伤员本体，而是在检出位置周边 `0.80–1.58 m` 确认 `FREE` 环带内按理想停靠距（`1.20 m`）、面向伤员的 VCTP 四轮通过性与地形代价选点，用 `VCTP + IGHA*` 规划路线；`plan_next_victim` 按最短已确认可达路径贪心调度下一名伤员。
   3. **安全停靠、抵近复核与物资投送**：小车到达目标接近点（或在伤员本体进入车载 LiDAR 时安全停于 `≤ 1.55 m` 停靠距外），原地转向正对伤员、停稳 `2.2 s` 并调用前视 RGB-D YOLO 复核与航拍先验跨视角融合（保存 `rover/victim_*_confirm.jpg`），发布 `report` 与 `delivery` 事件。
-  4. **独立真值评测与可视化**：Supervisor 侧 `_evaluate_rescue` 对照 `evaluation/search/D.json` 校验上报匹配（`≤ 1.0 m`）、停稳时长（`≥ 1.5 s`）、投送距离（`≤ 1.8 m`）与 0 碰撞，在车头旁生成可视化橙色物资箱并输出 `evaluation/rescue_preview.png`。
+  4. **独立真值评测与可视化**：Supervisor 侧 `_evaluate_rescue` 对照 `evaluation/truth_override.json`（或默认 `evaluation/search/D.json`）校验上报匹配（`≤ 1.0 m`）、停稳时长（`≥ 1.5 s`）、投送距离（`≤ 1.8 m`）与 0 碰撞，在车头旁生成可视化橙色物资箱并输出 `evaluation/rescue_preview.png`。
   5. **跟车实况录屏（`--record-video --video-speed 4`）**：规避 Windows 下 Webots `movieStartRecording` 的 FFmpeg `0xC0000005` 崩溃，采用平滑 3/4 跟车视角 `exportImage` + OpenCV H.264（`avc1`）合成，自动叠加顶部状态栏与右下角**实时无人机通行图 + 小车轨迹小地图 PiP**，输出 `evaluation/rescue_simulation.mp4`。
-- **Webots D 场景纯 YOLO 实跑验收（`uav_rescue_D_full_yolo_igha_vctp_clear_20261121_163823_37812`）**：
-  - **`MISSION_SUCCESS`**，无人机纯 YOLO 检出 `3/3`（0 误报，RMSE `0.134 m`）；
-  - 第 1 段 → 伤员 2（`11.47 m`，VCTP 23/23 通过，车载 YOLO 确认 `score=0.909`，停稳 `3.5 s`，投送距离 **`1.53 m`**）；
-  - 第 2 段 → 伤员 1（`57.83 m` 穿越河谷，车载 YOLO 正头顶视角确认 `score=0.864`，停稳 `2.3 s`，投送距离 **`1.46 m`**）；
-  - 总计 **`2/2` 全部空地跨视角融合确认**、**`2/2` 有效投送**、`65.93 m` / `224.0 s`、**`0` 碰撞、`0` 车体接触**、最大横滚/俯仰 `11.4° / 12.9°`、融合上报 RMSE `0.406 m`。
+- **Webots D 场景实跑验收**：
+  - **标准 D 场景纯 YOLO 闭环（`uav_rescue_D_full_yolo_igha_vctp_clear_20261121_163823_37812`）**：**`MISSION_SUCCESS`**，无人机检出 `3/3`，车载复核 **`2/2` 全部空地跨视角融合确认**（score `0.909`、`0.864`），**`2/2` 有效投送**（`1.53 m`、`1.46 m`），`65.93 m` / `224.0 s`，**`0` 碰撞、`0` 车体接触**，RMSE `0.406 m`。
+  - **D 场景随机位置 + 酒红/绯红换装全新重飞实测（`uav_rescue_D_full_yolo_igha_vctp_clear_randv42_20261121_190007_11920`）**：无人机 156 帧全新航飞实时检出 **全部 3/3 名非蓝衣随机伤员、0 误报、实时航拍误差 `0.080–0.138 m`**；四轮车自主穿谷行驶 **`111.68 m`、`0` 碰撞、`0` 车体接触**，第 1 段 `60.28 m`（VCTP `112/112` 通过）精准抵近酒红上衣伤员完成车载 YOLO 跨视角复核与 `1.42 m` 有效投送（融合误差 `0.204 m`），第 2 段再行 `51.4 m` 抵近东侧边缘伤员附近遇灌木未知区安全停车（`STOPPED_SAFE`）。
 
 ---
 
@@ -159,10 +157,12 @@ python -m venv .venv
 
 # 4. 纯 YOLO 空地协同双伤员救援投送（默认 --detector yolo，可加 --visible --realtime --keep-open 或 --record-video）
 .venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --max-victims 2 --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
+# 随机刷新伤员位置与随机服装颜色（需全新无人机重飞，可加 --nadir-only 加速）：
+.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --nadir-only --detector yolo --planner igha_vctp --max-victims 2 --victim-seed 42 --random-clothing
 
-# 5. 零泄漏 YOLO 数据采集、微调与留出 D 场景 A/B 评测
-.venv\Scripts\python.exe tools/collect_yolo_dataset.py --out runs/yolo_victim_dataset
-.venv\Scripts\python.exe tools/train_yolo_victim.py --data runs/yolo_victim_dataset/dataset.yaml --epochs 35 --output models/yolo11n_victim.pt
+# 5. 零泄漏多色随机位置 YOLO 数据采集、微调与留出 D 场景三重压力评测
+.venv\Scripts\python.exe tools/collect_yolo_dataset.py --out runs/yolo_victim_dataset_v2
+.venv\Scripts\python.exe tools/train_yolo_victim.py --data runs/yolo_victim_dataset_v2/dataset.yaml --epochs 25 --init models/yolo11n_victim.pt --output models/yolo11n_victim.pt
 .venv\Scripts\python.exe tools/train_yolo_victim.py --benchmark-only --output models/yolo11n_victim.pt --benchmark-survey runs/uav_mapping_D_full_route_value_20261121_133722_31008
 
 # 6. 神经网络局部规划训练与三组同条件评测（详见 docs/LOCAL_POLICY.md）
@@ -185,9 +185,8 @@ python -m venv .venv
    - 定位首轮局规试跑（`runs/local_learning_pilot_20261121/`）中规则专家 5.7–5.8 cm 轻微接触及 DAgger 1.9 m 早停的根因；
    - 扩大 D 全场多路段 + 多障碍构型的专家采集（补齐减速/停止样本），进行多轮 DAgger 聚合微调；
    - 在 D 局部与 D 全场产出高成功率的**规则 vs BC vs BC+DAgger** 同条件评测表，并将最终神经网络局规接入 `tools/run_uav_rescue.py`，完成“**纯 YOLO + 四种全局规划 + 神经网络局部规划 + 物理投送**”完整合体。
-2. **行进中动态交互补拍与 3 伤员全覆盖**：接通小车遇 `UNKNOWN` 阻断时实时向无人机请求 DUCPP 补拍并刷新通行图；支持 `--max-victims 3` 或返航起点 `reload` 覆盖全部 3 名伤员。
-3. **高空 YOLO 极端服装换色泛化**：当前 `yolo11n_victim.pt` 在未见 D 场景达 `3/3`、0 误报，但 19 m 约 25 px 极小目标在极端 `+60°` 色相偏移或纯灰度下置信度仍会下降（地面近景 `yolo11n.pt` 在变色/灰度下仍稳定 `0.41–0.75`）；后续可在采集阶段直接随机替换训练伤员服装贴图再微调一轮。
-4. **Git 远端同步**：在网络畅通的本机终端执行 `git push origin main` 将本地提交 `110fbd4`（及本次文档更新）同步到 `https://github.com/pindo-coder/webots-vision-rescue.git`。
+2. **行进中动态交互补拍与 3 伤员全覆盖**：接通小车遇 `UNKNOWN` 阻断时实时向无人机请求 DUCPP 补拍并刷新通行图（如随机伤员落在东侧林缘窄缝时补拍解锁）；支持 `--max-victims 3` 或返航起点 `reload` 覆盖全部 3 名伤员。
+3. **Git 远端同步**：在网络畅通的本机终端执行 `git push origin main` 将本地提交同步到 `https://github.com/pindo-coder/webots-vision-rescue.git`。
 
 ---
 
@@ -199,7 +198,8 @@ python -m venv .venv
 | 载具外观重设计留证 | `runs/vehicle_redesign_final_20261121_141232/vehicle_showcase.jpg` | 四轮车 + 无人机 PBR 重设计，零光学自遮挡 |
 | 定点闭环：A\* 无障碍 / 绕行 / 封堵停车 | `runs/uav_nav_D_full_clear_20261121_130543_12840/`、`runs/uav_nav_D_full_detour_20261121_130931_38364/`、`runs/uav_nav_D_local_block_20261121_131102_30056/` | `ARRIVED`(0 碰)、`ARRIVED`(5 重规划, 0 碰)、`STOPPED_SAFE`(0 碰) |
 | 定点闭环：`VCTP + IGHA*` 对照 | `runs/uav_nav_D_full_igha_vctp_clear_20261121_133902_38772/` | `ARRIVED` 126.2 s，VCTP 75/75 (100%)，最大横滚/俯仰 `10.46°/12.13°` |
-| 零泄漏 YOLO 数据集与微调 | `runs/yolo_victim_dataset/preview_labels.jpg`、`runs/yolo_victim_train_20261121_154709/`、`models/yolo11n_victim.pt` | A+B 496 / C 175；留出 D 航拍 `3/3`、0 误报、RMSE `0.134 m`（COCO `0/3`） |
-| **纯 YOLO 救援闭环验收** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_163823_37812/evaluation/summary.json`、`rescue_preview.png` | **`MISSION_SUCCESS`**，3/3 检出、2/2 跨视角融合、2/2 投送（1.53/1.46 m）、0 碰撞 |
+| 零泄漏 v2 全色域 YOLO 数据集与微调 | `runs/yolo_victim_dataset_v2/preview_labels.jpg`、`runs/yolo_victim_train_20261121_182431/`、`models/yolo11n_victim.pt` | A+B 525 / C 140（mAP@50 `0.862`）；留出 D 原图/色偏/纯灰度均 `3/3`、0 误报、RMSE `0.092–0.117 m` |
+| **纯 YOLO 救援闭环验收（标准 D）** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_163823_37812/evaluation/summary.json`、`rescue_preview.png` | **`MISSION_SUCCESS`**，3/3 检出、2/2 跨视角融合、2/2 投送（1.53/1.46 m）、0 碰撞 |
+| **随机位置 + 随机换装全新重飞实测** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_randv42_20261121_190007_11920/evaluation/rescue_preview.png`、`rover/victim_03_confirm.jpg` | 实时航飞检出 3/3 酒红/绯红随机伤员（0 误报，误差 `0.08–0.14 m`）；车行 `111.68 m` 0 碰撞，完成酒红伤员跨视角确认与 `1.42 m` 投送 |
 | 720p 跟车仿真视频（带实时小地图） | `runs/uav_rescue_D_full_surrogate_rgbd_igha_vctp_clear_20261121_145756_27572/evaluation/rescue_simulation.mp4`、`video_keyframes.jpg` | 55.9 s (4× 速, 1118 帧, H.264, 82 MB)，`MISSION_SUCCESS` |
 | 神经网络局部规划首轮试跑 | `runs/local_learning_pilot_20261121/`、`docs/LOCAL_POLICY.md` | 规则 vs BC vs BC+DAgger 首轮试跑（下阶段重点攻关） |

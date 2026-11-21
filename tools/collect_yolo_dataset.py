@@ -1,11 +1,10 @@
-"""Collect a zero-leakage Webots UAV + Rover victim detection dataset from Scenes A, B (train) and C (val).
+"""Collect a zero-leakage, color- & position-randomized Webots aerial YOLO dataset from Scenes A, B (train) and C (val).
 
 Scene D is strictly held out and NEVER used during dataset generation or training.
 """
 from pathlib import Path
 import argparse
 import json
-import math
 import os
 import random
 import shutil
@@ -24,34 +23,33 @@ sys.path.insert(0, str(ROOT / "evaluation"))
 from metrics import height_at
 
 
-# Extra casualty placements (x, y, yaw) on Scenes A, B, C (strictly outside Scene D).
 EXTRA_CASUALTIES = {
-    "A": [
-        (-11.5, -6.5, 0.35),
-        (-3.0, 8.0, 1.95),
-        (5.5, -5.5, -2.10),
-        (11.0, 6.2, 0.85),
-        (-13.5, 5.5, -0.90),
-    ],
-    "B": [
-        (-12.0, -5.0, 2.40),
-        (-4.5, 7.5, -0.30),
-        (4.0, -6.8, 1.25),
-        (12.2, 4.5, -1.60),
-        (-2.0, -2.5, 0.55),
-    ],
-    "C": [
-        (-11.0, -7.2, -0.75),
-        (-5.5, 6.8, 2.10),
-        (6.0, -4.5, 0.15),
-        (10.5, 7.0, -2.45),
-        (1.0, 1.5, 1.40),
-    ],
+    "A": [(-11.5, -6.5), (-3.0, 8.0), (5.5, -5.5), (11.0, 6.2), (-13.5, 5.5)],
+    "B": [(-12.0, -5.0), (-4.5, 7.5), (4.0, -6.8), (12.2, 4.5), (-2.0, -2.5)],
+    "C": [(-11.0, -7.2), (-5.5, 6.8), (6.0, -4.5), (10.5, 7.0), (1.0, 1.5)],
 }
 
 
+def _tag_clothing_appearances(text, tag_index):
+    """Attach unique DEF names to shirt and pants PBRAppearance nodes for live color randomization."""
+    shirt_def = f"SHIRT_APP_{tag_index}"
+    pants_def = f"PANTS_APP_{tag_index}"
+    out_lines = []
+    shirt_tagged = False
+    pants_tagged = False
+    for line in text.splitlines():
+        if not shirt_tagged and "_shirt.obj" in line and "appearance PBRAppearance {" in line:
+            line = line.replace("appearance PBRAppearance {", f"appearance DEF {shirt_def} PBRAppearance {{", 1)
+            shirt_tagged = True
+        elif not pants_tagged and "_pants.obj" in line and "appearance PBRAppearance {" in line:
+            line = line.replace("appearance PBRAppearance {", f"appearance DEF {pants_def} PBRAppearance {{", 1)
+            pants_tagged = True
+        out_lines.append(line)
+    return "\n".join(out_lines), (shirt_def if shirt_tagged else None), (pants_def if pants_tagged else None)
+
+
 def build_collector_world(world_path, scene_key):
-    """Build a temporary Webots world based on Scene A, B, or C with extra varied casualties."""
+    """Build a temporary Webots world based on Scene A, B, or C with taggable multicolored casualties."""
     assert scene_key in ("A", "B", "C"), "Scene D must remain strictly held out!"
     source = ROOT / "worlds" / f"search_{scene_key}.wbt"
     if not source.is_file():
@@ -59,13 +57,16 @@ def build_collector_world(world_path, scene_key):
     scene = source.read_text(encoding="utf-8")
     meta = json.loads((ROOT / "evaluation/scenarios" / f"{scene_key}.json").read_text(encoding="utf-8"))
 
-    # Remove rover & referee so the collector runs super fast and cleanly.
     scene = replace_node(scene, r"\bDEF\s+ROVER\s+ResearchRover", "")
     scene = replace_node(scene, r"\bDEF\s+SEARCH_REFEREE\s+Robot", "")
 
+    # Tag the existing scene casualty's clothing appearances as index 0.
+    scene, s0, p0 = _tag_clothing_appearances(scene, 0)
     victim_defs = ["CASUALTY"]
-    for idx, (vx, vy, vyaw) in enumerate(EXTRA_CASUALTIES[scene_key], 1):
-        # Cycle visual model keys A/B/C so shirt/pants/skin variation is diverse.
+    shirt_defs = [s0] if s0 else []
+    pants_defs = [p0] if p0 else []
+
+    for idx, (vx, vy) in enumerate(EXTRA_CASUALTIES[scene_key], 1):
         vkey = ("A", "B", "C")[(idx + ord(scene_key)) % 3]
         elements = RescueElements(dict(key=vkey, seed=500 + idx * 17 + ord(scene_key), goal=[vx, vy]),
                                   lambda x, y: height_at(meta, x, y))
@@ -74,10 +75,13 @@ def build_collector_world(world_path, scene_key):
         def_name = f"TRAIN_VICTIM_{idx}"
         node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
         node = node.replace('name "casualty"', f'name "train_victim_{idx}"', 1)
-        # Override yaw by wrapping/replacing the top-level rotation? Easier: ground_frame already baked yaw,
-        # so vary yaw by cycling vkey + let UAV random yaw cover full 360 deg orientation!
+        node, s_def, p_def = _tag_clothing_appearances(node, idx)
         scene += "\n" + node
         victim_defs.append(def_name)
+        if s_def:
+            shirt_defs.append(s_def)
+        if p_def:
+            pants_defs.append(p_def)
 
     collector_node = '''
 DEF YOLO_COLLECTOR Robot {
@@ -106,16 +110,16 @@ DEF YOLO_COLLECTOR Robot {
     }
     Camera {
       name "rover_rgb"
-      width 160
-      height 120
+      width 320
+      height 240
       fieldOfView 1.5707963
       near 0.1
       far 30
     }
     RangeFinder {
       name "rover_depth"
-      width 160
-      height 120
+      width 320
+      height 240
       fieldOfView 1.5707963
       minRange 0.25
       maxRange 12
@@ -125,11 +129,35 @@ DEF YOLO_COLLECTOR Robot {
 '''
     scene += "\n" + collector_node
     world_path.write_text(scene, encoding="utf-8")
-    return victim_defs
+    return victim_defs, shirt_defs, pants_defs
+
+
+def add_grayscale_train_copies(dataset_dir, pos_count=55, neg_count=20, seed=71):
+    """Add pure 3-channel grayscale copies to train/ to enforce color-agnostic silhouette learning."""
+    rng = random.Random(seed)
+    img_dir = dataset_dir / "images/train"
+    lbl_dir = dataset_dir / "labels/train"
+    pos_imgs = sorted(img_dir.glob("*_pos_*.jpg"))
+    neg_imgs = sorted(img_dir.glob("*_neg_*.jpg"))
+    rng.shuffle(pos_imgs)
+    rng.shuffle(neg_imgs)
+    added = 0
+    for src in pos_imgs[:pos_count] + neg_imgs[:neg_count]:
+        bgr = cv2.imread(str(src))
+        if bgr is None:
+            continue
+        gray = cv2.cvtColor(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+        dst_stem = f"{src.stem}_gray"
+        cv2.imwrite(str(img_dir / f"{dst_stem}.jpg"), gray, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+        src_lbl = lbl_dir / f"{src.stem}.txt"
+        if src_lbl.is_file():
+            shutil.copy2(src_lbl, lbl_dir / f"{dst_stem}.txt")
+        added += 1
+    return added
 
 
 def draw_label_preview(dataset_dir):
-    """Draw a 4x4 contact sheet of labeled UAV and Rover samples for visual quality audit."""
+    """Draw a 4x4 contact sheet of labeled multi-color aerial samples for visual audit."""
     samples = []
     for split in ("train", "val"):
         img_dir = dataset_dir / "images" / split
@@ -140,19 +168,15 @@ def draw_label_preview(dataset_dir):
                 samples.append((split, img_path, lbl_path))
     if not samples:
         return
-    uav_s = [s for s in samples if "_uav_" in s[1].stem]
-    rov_s = [s for s in samples if "_rover_" in s[1].stem]
     rng = random.Random(42)
-    rng.shuffle(uav_s)
-    rng.shuffle(rov_s)
-    picks = uav_s[:10] + rov_s[:6]
-    while len(picks) < 16 and samples:
+    rng.shuffle(samples)
+    picks = samples[:16]
+    while len(picks) < 16:
         picks.append(samples[len(picks) % len(samples)])
 
     tiles = []
     for split, img_path, lbl_path in picks[:16]:
         img = cv2.imread(str(img_path))
-        h, w = img.shape[:2]
         canvas = cv2.resize(img, (320, 240), interpolation=cv2.INTER_AREA)
         for line in lbl_path.read_text(encoding="utf-8").splitlines():
             parts = line.split()
@@ -164,12 +188,11 @@ def draw_label_preview(dataset_dir):
             x2 = int(round((cx + bw / 2) * 320))
             y2 = int(round((cy + bh / 2) * 240))
             cv2.rectangle(canvas, (x1, y1), (x2, y2), (40, 240, 80), 2)
-        cv2.putText(canvas, f"{split}:{img_path.stem[:20]}", (6, 18),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"{split}:{img_path.stem[:22]}", (6, 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
         tiles.append(canvas)
 
-    rows = [np.hstack(tiles[i:i + 4]) for i in range(0, 16, 4)]
-    sheet = np.vstack(rows)
+    sheet = np.vstack([np.hstack(tiles[i:i + 4]) for i in range(0, 16, 4)])
     cv2.imwrite(str(dataset_dir / "preview_labels.jpg"), sheet, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
 
 
@@ -188,10 +211,11 @@ def collect(out_dir, scale=1.0, port=18590):
     (ROOT / "controllers/yolo_dataset_collector/runtime.ini").write_text(runtime, encoding="utf-8")
 
     # Train on Scenes A + B; Val on Scene C; Scene D strictly held out!
+    # 100% dedicated to 640x480 aerial frames with randomized victim positions & 16 clothing colors.
     plan = [
-        ("A", "train", int(round(130 * scale)), int(round(45 * scale)), int(round(55 * scale)), int(round(18 * scale)), 101),
-        ("B", "train", int(round(130 * scale)), int(round(45 * scale)), int(round(55 * scale)), int(round(18 * scale)), 202),
-        ("C", "val",   int(round(90 * scale)),  int(round(30 * scale)), int(round(40 * scale)), int(round(15 * scale)), 303),
+        ("A", "train", int(round(170 * scale)), int(round(55 * scale)), 0, 0, 1011),
+        ("B", "train", int(round(170 * scale)), int(round(55 * scale)), 0, 0, 2022),
+        ("C", "val",   int(round(105 * scale)), int(round(35 * scale)), 0, 0, 3033),
     ]
 
     manifest = dict(
@@ -199,12 +223,15 @@ def collect(out_dir, scale=1.0, port=18590):
         held_out_test_scenes=["D"],
         train_scenes=["A", "B"],
         val_scenes=["C"],
+        randomized_victim_positions=True,
+        randomized_clothing_palette=16,
         per_scene={},
     )
 
     for idx, (scene_key, split, uav_pos, uav_neg, rov_pos, rov_neg, seed) in enumerate(plan):
         world_path = ROOT / "worlds" / f"_tmp_yolo_collect_{scene_key}.wbt"
-        victim_defs = build_collector_world(world_path, scene_key)
+        wbproj_path = ROOT / "worlds" / f"._tmp_yolo_collect_{scene_key}.wbproj"
+        victim_defs, shirt_defs, pants_defs = build_collector_world(world_path, scene_key)
         report_path = dataset_dir / f"report_{scene_key}.json"
         spec_path = dataset_dir / f"spec_{scene_key}.json"
         spec = dict(
@@ -212,6 +239,9 @@ def collect(out_dir, scale=1.0, port=18590):
             prefix=f"scene{scene_key}",
             seed=seed,
             victim_defs=victim_defs,
+            shirt_app_defs=shirt_defs,
+            pants_app_defs=pants_defs,
+            refresh_every=4,
             uav_pos=uav_pos,
             uav_neg=uav_neg,
             rover_pos=rov_pos,
@@ -224,7 +254,7 @@ def collect(out_dir, scale=1.0, port=18590):
         env = dict(os.environ, YOLO_COLLECT_SPEC=str(spec_path), PYTHONDONTWRITEBYTECODE="1")
         cmd = [str(executable), "--batch", "--mode=fast", f"--port={port + idx}",
                "--stdout", "--stderr", "--no-rendering", str(world_path)]
-        print(f"[Collect] Scene {scene_key} ({split}) -> target {uav_pos}+{uav_neg} UAV, {rov_pos}+{rov_neg} Rover...",
+        print(f"[Collect] Scene {scene_key} ({split}) -> {uav_pos} pos + {uav_neg} hard-neg UAV (random pos + 16 colors)...",
               flush=True)
         try:
             res = subprocess.run(
@@ -233,12 +263,16 @@ def collect(out_dir, scale=1.0, port=18590):
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         finally:
-            if world_path.is_file():
-                world_path.unlink(missing_ok=True)
+            world_path.unlink(missing_ok=True)
+            wbproj_path.unlink(missing_ok=True)
         if res.returncode or simulator_has_errors(res.stdout):
             raise RuntimeError(f"Collector failed on Scene {scene_key} (code {res.returncode}):\n{res.stdout[-2000:]}")
         manifest["per_scene"][scene_key] = json.loads(report_path.read_text(encoding="utf-8"))
         print(f"[Collect] Scene {scene_key} done: {manifest['per_scene'][scene_key]}", flush=True)
+
+    gray_added = add_grayscale_train_copies(dataset_dir, pos_count=int(round(55 * scale)), neg_count=int(round(20 * scale)))
+    manifest["grayscale_train_copies"] = gray_added
+    print(f"[Collect] Added {gray_added} pure-grayscale training copies for color-agnostic learning.", flush=True)
 
     yaml_text = (
         f"path: {dataset_dir.as_posix()}\n"
@@ -255,8 +289,8 @@ def collect(out_dir, scale=1.0, port=18590):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Collect Webots UAV+Rover YOLO victim dataset (Scenes A/B/C only).")
-    parser.add_argument("--out", default="runs/yolo_victim_dataset")
+    parser = argparse.ArgumentParser(description="Collect color- & position-randomized Webots aerial YOLO dataset (A/B/C only).")
+    parser.add_argument("--out", default="runs/yolo_victim_dataset_v2")
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--port", type=int, default=18590)
     args = parser.parse_args()

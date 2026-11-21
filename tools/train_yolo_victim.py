@@ -17,16 +17,32 @@ for rel in ("controllers/uav_mapper", "controllers/search_agent"):
         sys.path.insert(0, p)
 
 
-def benchmark_on_scene_d(weights_path, survey_dir, conf_min=0.35, min_views=2):
+def _hue_shift(bgr, shift=60):
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    hsv[:, :, 0] = (hsv[:, :, 0].astype(np.int32) + int(shift)) % 180
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
+def _to_grayscale(bgr):
+    return cv2.cvtColor(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+
+
+def benchmark_on_scene_d(weights_path, survey_dir, conf_min=0.35, min_views=2, variant="orig"):
     """Evaluate a YOLO weights file on strictly held-out Scene D aerial survey frames."""
     from aerial_victims import detect_victims_from_saved_survey
+
+    transform = None
+    if variant == "hue+60":
+        transform = lambda img: _hue_shift(img, 60)
+    elif variant == "grayscale":
+        transform = _to_grayscale
 
     prev_env = os.environ.get("UAV_YOLO_WEIGHTS")
     os.environ["UAV_YOLO_WEIGHTS"] = str(weights_path)
     try:
         t0 = time.time()
         doc = detect_victims_from_saved_survey(
-            survey_dir, detector_mode="yolo", min_views=min_views,
+            survey_dir, detector_mode="yolo", min_views=min_views, transform_bgr=transform,
         )
         elapsed_s = time.time() - t0
     finally:
@@ -81,8 +97,8 @@ def benchmark_on_scene_d(weights_path, survey_dir, conf_min=0.35, min_views=2):
     )
 
 
-def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
-          output_weights="models/yolo11n_victim.pt", survey_dir=None):
+def train(dataset_yaml, epochs=28, imgsz=640, batch=16, lr0=0.0018,
+          init_weights=None, output_weights="models/yolo11n_victim.pt", survey_dir=None):
     from ultralytics import YOLO, settings
 
     settings.update({"sync": False})
@@ -92,9 +108,11 @@ def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
     if not dataset_yaml.is_file():
         raise FileNotFoundError(f"Dataset yaml not found: {dataset_yaml}")
 
-    base_weights = ROOT / "models/yolo11n.pt"
+    base_weights = Path(init_weights) if init_weights else ROOT / "models/yolo11n.pt"
+    if not base_weights.is_absolute():
+        base_weights = ROOT / base_weights
     if not base_weights.is_file():
-        raise FileNotFoundError(f"Base weights missing: {base_weights}")
+        raise FileNotFoundError(f"Init weights missing: {base_weights}")
 
     run_name = f"yolo_victim_train_{time.strftime('%Y%m%d_%H%M%S')}"
     project_dir = ROOT / "runs"
@@ -115,11 +133,11 @@ def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
         lr0=lr0,
         lrf=0.05,
         weight_decay=5e-4,
-        warmup_epochs=3.0,
-        patience=15,
-        # Strong hue & full 360-deg rotation augmentation so the model learns body silhouette, not blue shirts.
-        hsv_h=0.18,
-        hsv_s=0.65,
+        warmup_epochs=2.0,
+        patience=12,
+        # Strong hue & full 360-deg rotation augmentation for color-agnostic silhouette detection.
+        hsv_h=0.35,
+        hsv_s=0.70,
         hsv_v=0.45,
         degrees=180.0,
         translate=0.15,
@@ -128,7 +146,7 @@ def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
         flipud=0.5,
         mosaic=0.8,
         mixup=0.08,
-        close_mosaic=8,
+        close_mosaic=6,
         seed=71,
         verbose=True,
     )
@@ -165,9 +183,11 @@ def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
         if not sdir.is_absolute():
             sdir = ROOT / sdir
         if sdir.is_dir():
-            print("[Train YOLO] Running held-out Scene D A/B benchmark (upstream COCO vs fine-tuned)...", flush=True)
-            report["held_out_scene_D_baseline_coco"] = benchmark_on_scene_d(base_weights, sdir)
-            report["held_out_scene_D_finetuned"] = benchmark_on_scene_d(out_path, sdir)
+            print("[Train YOLO] Running held-out Scene D stress benchmark (orig / hue+60 / grayscale)...", flush=True)
+            report["held_out_scene_D_baseline_coco"] = benchmark_on_scene_d(ROOT / "models/yolo11n.pt", sdir, variant="orig")
+            report["held_out_scene_D_finetuned_orig"] = benchmark_on_scene_d(out_path, sdir, variant="orig")
+            report["held_out_scene_D_finetuned_hue60"] = benchmark_on_scene_d(out_path, sdir, variant="hue+60")
+            report["held_out_scene_D_finetuned_gray"] = benchmark_on_scene_d(out_path, sdir, variant="grayscale")
 
     report_file = train_dir / "benchmark_scene_D.json"
     report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -177,11 +197,12 @@ def train(dataset_yaml, epochs=35, imgsz=640, batch=16, lr0=0.0025,
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune YOLO11n on Webots Scenes A/B/C and test held-out on Scene D.")
-    parser.add_argument("--data", default="runs/yolo_victim_dataset/dataset.yaml")
-    parser.add_argument("--epochs", type=int, default=35)
+    parser.add_argument("--data", default="runs/yolo_victim_dataset_v2/dataset.yaml")
+    parser.add_argument("--epochs", type=int, default=25)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
-    parser.add_argument("--lr0", type=float, default=0.0025)
+    parser.add_argument("--lr0", type=float, default=0.0018)
+    parser.add_argument("--init", default=None, help="Initial weights (defaults to models/yolo11n.pt).")
     parser.add_argument("--output", default="models/yolo11n_victim.pt")
     parser.add_argument("--benchmark-survey", default="runs/uav_mapping_D_full_route_value_20261121_133722_31008")
     parser.add_argument("--benchmark-only", action="store_true")
@@ -194,8 +215,10 @@ def main():
         if not out_path.is_absolute():
             out_path = ROOT / out_path
         report = dict(
-            held_out_scene_D_baseline_coco=benchmark_on_scene_d(ROOT / "models/yolo11n.pt", sdir),
-            held_out_scene_D_finetuned=benchmark_on_scene_d(out_path, sdir),
+            held_out_scene_D_baseline_coco=benchmark_on_scene_d(ROOT / "models/yolo11n.pt", sdir, variant="orig"),
+            held_out_scene_D_finetuned_orig=benchmark_on_scene_d(out_path, sdir, variant="orig"),
+            held_out_scene_D_finetuned_hue60=benchmark_on_scene_d(out_path, sdir, variant="hue+60"),
+            held_out_scene_D_finetuned_gray=benchmark_on_scene_d(out_path, sdir, variant="grayscale"),
         )
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return
@@ -205,6 +228,7 @@ def main():
         imgsz=args.imgsz,
         batch=args.batch,
         lr0=args.lr0,
+        init_weights=args.init,
         output_weights=args.output,
         survey_dir=args.benchmark_survey,
     )

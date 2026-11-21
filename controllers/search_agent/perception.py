@@ -76,15 +76,16 @@ class PersonDetector:
     def detect(self, bgr, depth):
         if self.model is not None:
             boxes=[];scores=[]
+            conf_thr = .50 if self.yolo_single_pass else .35
             rotations = (0,) if self.yolo_single_pass else range(4)
             for turns in rotations:
                 view=bgr if turns==0 else np.ascontiguousarray(np.rot90(bgr,-turns))
-                output=self.model.predict(view,conf=.35,classes=[0],imgsz=640,device="cpu",verbose=False)[0]
+                output=self.model.predict(view,conf=conf_thr,classes=[0],imgsz=640,device="cpu",verbose=False)[0]
                 for box,score in zip(output.boxes.xyxy.cpu().numpy(),output.boxes.conf.cpu().numpy()):
                     x1,y1,x2,y2=unrotate_box(box,turns,bgr.shape[1],bgr.shape[0])
                     boxes.append([x1,y1,x2-x1,y2-y1]);scores.append(float(score))
             if not boxes:return []
-            keep=np.asarray(cv2.dnn.NMSBoxes(boxes,scores,.35,.45)).reshape(-1)
+            keep=np.asarray(cv2.dnn.NMSBoxes(boxes,scores,conf_thr,.45)).reshape(-1)
             return [([int(boxes[i][0]),int(boxes[i][1]),int(boxes[i][0]+boxes[i][2]),
                       int(boxes[i][1]+boxes[i][3])],scores[i],None) for i in keep]
         # Controlled pipeline test. This colour/size filter is not a general person detector.

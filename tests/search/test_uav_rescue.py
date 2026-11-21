@@ -153,6 +153,32 @@ class TestUavRescue(unittest.TestCase):
         self.assertEqual(gnd.weights_path.name, "yolo11n.pt")
         self.assertFalse(gnd.yolo_single_pass)
 
+    def test_sample_random_victims_d_valid_and_reproducible(self):
+        tools_dir = str(ROOT / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        eval_dir = str(ROOT / "evaluation")
+        if eval_dir not in sys.path:
+            sys.path.insert(0, eval_dir)
+        if not (ROOT / "evaluation/search/D.json").is_file():
+            self.skipTest("D.json not built")
+        import json
+        from run_uav_rescue import sample_random_victims_d
+
+        cfg = json.loads((ROOT / "config/scenes/uav_mapping_full_D.json").read_text(encoding="utf-8"))
+        v1, _ = sample_random_victims_d(cfg, seed=42, count=3, random_clothing=True)
+        v2, _ = sample_random_victims_d(cfg, seed=42, count=3, random_clothing=True)
+        v3, _ = sample_random_victims_d(cfg, seed=99, count=3, random_clothing=True)
+        self.assertEqual(v1, v2)
+        self.assertNotEqual([v["xy"] for v in v1], [v["xy"] for v in v3])
+        self.assertEqual(len(v1), 3)
+        for v in v1:
+            self.assertIsNotNone(v["shirt_rgb"])
+            self.assertGreaterEqual(math.hypot(v["xy"][0] - (-18.0), v["xy"][1] - (-11.0)), 4.5)
+        for i in range(len(v1)):
+            for j in range(i + 1, len(v1)):
+                self.assertGreaterEqual(math.dist(v1[i]["xy"], v1[j]["xy"]), 7.5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,9 @@
-"""Supervisor camera-rig controller for zero-leakage YOLO victim dataset collection.
+"""Supervisor camera-rig controller for color-invariant & position-randomized YOLO aerial dataset collection.
 
 Runs ONLY on offline training/validation worlds (Scenes A, B, C; NEVER Scene D).
-Uses exact 3D-to-2D projection of casualty geometry verified against the camera's
-own RangeFinder depth map to produce tight, occlusion-checked YOLO labels.
+Dynamically randomizes casualty positions (terrain-slope-aligned), yaws, and 16-color
+shirt / 8-color pants PBR appearances, then projects 3D casualty geometry with RangeFinder
+depth occlusion verification to produce tight YOLO bounding-box labels.
 """
 from pathlib import Path
 import json
@@ -21,9 +22,6 @@ sys.path.insert(0, str(ROOT / "evaluation"))
 from metrics import height_at, look_at_rotation
 
 
-# Local 3D sample points on a supine casualty (from tools/scene_elements.py):
-# Head around x=-0.62, shoulders x=-0.41, hips x=+0.13, knees x=+0.43, boots x=+0.84;
-# Width y in [-0.28, +0.28], height z in [0.06, 0.24].
 BODY_LOCAL_POINTS = np.array(
     [
         [x, y, z]
@@ -32,22 +30,72 @@ BODY_LOCAL_POINTS = np.array(
         for z in (0.08, 0.22)
     ]
     + [
-        [-0.62, 0.0, 0.25],  # face/head top
-        [-0.30, -0.32, 0.12],  # arm R
-        [-0.30, 0.32, 0.12],  # arm L
-        [0.05, -0.32, 0.10],  # hand R
-        [0.05, 0.32, 0.10],  # hand L
-        [0.88, -0.14, 0.10],  # boot R
-        [0.88, 0.14, 0.10],  # boot L
+        [-0.62, 0.0, 0.25],
+        [-0.30, -0.32, 0.12],
+        [-0.30, 0.32, 0.12],
+        [0.05, -0.32, 0.10],
+        [0.05, 0.32, 0.10],
+        [0.88, -0.14, 0.10],
+        [0.88, 0.14, 0.10],
     ],
     dtype=float,
 )
+
+# Diverse 16-color shirt palette (bright rescue colors, dark colors, and low-contrast earth/gray tones).
+SHIRT_COLORS = [
+    (0.76, 0.14, 0.14),  # crimson red
+    (0.90, 0.42, 0.08),  # safety orange
+    (0.84, 0.72, 0.16),  # mustard yellow
+    (0.16, 0.42, 0.20),  # forest green
+    (0.42, 0.44, 0.26),  # olive / khaki
+    (0.84, 0.84, 0.82),  # off-white / light gray
+    (0.24, 0.25, 0.27),  # charcoal gray
+    (0.16, 0.25, 0.42),  # dark navy
+    (0.14, 0.38, 0.78),  # royal blue
+    (0.42, 0.66, 0.86),  # sky blue
+    (0.46, 0.14, 0.22),  # burgundy / maroon
+    (0.46, 0.30, 0.20),  # warm brown
+    (0.14, 0.50, 0.52),  # teal
+    (0.44, 0.24, 0.54),  # muted purple
+    (0.66, 0.58, 0.44),  # tan / beige
+    (0.82, 0.42, 0.44),  # coral / dusty pink
+]
+
+PANTS_COLORS = [
+    (0.16, 0.18, 0.22),  # dark slate
+    (0.18, 0.26, 0.38),  # denim blue
+    (0.46, 0.42, 0.32),  # khaki
+    (0.28, 0.32, 0.22),  # olive drab
+    (0.32, 0.24, 0.18),  # dark brown
+    (0.54, 0.54, 0.54),  # medium gray
+    (0.10, 0.10, 0.11),  # black
+    (0.22, 0.22, 0.30),  # dark navy
+]
 
 
 def _node_pose(node):
     pos = np.asarray(node.getPosition(), dtype=float)
     rot = np.asarray(node.getOrientation(), dtype=float).reshape(3, 3)
     return pos, rot
+
+
+def _ground_aligned_axis_angle(meta, x, y, yaw):
+    """Compute Webots axis-angle aligning casualty supine frame to local terrain normal."""
+    delta = 0.08
+    dx = (height_at(meta, x + delta, y) - height_at(meta, x - delta, y)) / (2.0 * delta)
+    dy = (height_at(meta, x, y + delta) - height_at(meta, x, y - delta)) / (2.0 * delta)
+    up = np.array([-dx, -dy, 1.0], dtype=float)
+    up /= np.linalg.norm(up)
+    fwd = np.array([math.cos(yaw), math.sin(yaw), dx * math.cos(yaw) + dy * math.sin(yaw)], dtype=float)
+    fwd /= np.linalg.norm(fwd)
+    left = np.cross(up, fwd)
+    left /= np.linalg.norm(left)
+    mat = np.column_stack((fwd, left, up))
+    rv = Rotation.from_matrix(mat).as_rotvec()
+    ang = float(np.linalg.norm(rv))
+    if ang < 1e-8:
+        return [0.0, 0.0, 1.0, 0.0]
+    return [*(rv / ang).tolist(), ang]
 
 
 def _project_casualties(cam_pos, cam_rot, width, height, fov, depth_img, victims, min_vis_ratio=0.22):
@@ -58,7 +106,7 @@ def _project_casualties(cam_pos, cam_rot, width, height, fov, depth_img, victims
 
     for v_pos, v_rot in victims:
         pts_world = BODY_LOCAL_POINTS @ v_rot.T + v_pos
-        pts_cam = (pts_world - cam_pos) @ cam_rot  # R_cam.T @ (p - t)
+        pts_cam = (pts_world - cam_pos) @ cam_rot
         in_front = pts_cam[:, 0] > 0.35
         if np.count_nonzero(in_front) < 8:
             continue
@@ -74,17 +122,14 @@ def _project_casualties(cam_pos, cam_rot, width, height, fov, depth_img, victims
         vi = np.clip(np.round(v[in_img]).astype(int), 0, height - 1)
         exp_d = pc[in_img, 0]
         meas_d = depth_img[vi, ui]
-        # Visible if measured depth is close to expected body depth (not blocked by a tree canopy in front).
         tol = np.maximum(0.65, 0.055 * exp_d)
         visible = np.isfinite(meas_d) & (meas_d >= exp_d - tol) & (meas_d <= exp_d + tol * 1.4)
         vis_ratio = float(np.count_nonzero(visible)) / float(n_in)
 
         if vis_ratio < min_vis_ratio:
-            # Partially/fully occluded victim in frame -> mark frame ambiguous if negative or unclear.
             ambiguous = True
             continue
 
-        # Tight bounding box around visible points (expanded gently to cover limbs/outline).
         uv_use_u = u[in_img][visible]
         uv_use_v = v[in_img][visible]
         x1, x2 = float(np.min(uv_use_u)), float(np.max(uv_use_u))
@@ -115,7 +160,6 @@ def _set_pose(trans_field, rot_field, pos, rot_axis_angle):
 
 
 def _nadir_oblique_rot(yaw, pitch_from_nadir_rad, roll_rad=0.0):
-    """Camera +X points downward (pitch = +pi/2 - pitch_from_nadir_rad)."""
     mat = Rotation.from_euler("ZYX", [yaw, math.pi / 2.0 - pitch_from_nadir_rad, roll_rad]).as_matrix()
     rv = Rotation.from_matrix(mat).as_rotvec()
     ang = float(np.linalg.norm(rv))
@@ -152,19 +196,58 @@ def main():
     uav_w, uav_h, uav_fov = uav_rgb.getWidth(), uav_rgb.getHeight(), uav_rgb.getFov()
     rov_w, rov_h, rov_fov = rover_rgb.getWidth(), rover_rgb.getHeight(), rover_rgb.getFov()
 
-    # Warm up two steps so Webots initializes all transforms & depth buffers.
     for _ in range(3):
         sim.step(step_ms)
 
-    victim_nodes = []
-    for def_name in spec["victim_defs"]:
-        node = sim.getFromDef(def_name)
-        if node is not None:
-            victim_nodes.append(node)
-    victims = [_node_pose(n) for n in victim_nodes]
-    print(f"[YOLO Collector] {prefix}: found {len(victims)} casualty node(s).", flush=True)
+    victim_nodes = [sim.getFromDef(d) for d in spec["victim_defs"]]
+    victim_nodes = [n for n in victim_nodes if n is not None]
+    shirt_apps = [sim.getFromDef(d) for d in spec.get("shirt_app_defs", [])]
+    shirt_apps = [n for n in shirt_apps if n is not None]
+    pants_apps = [sim.getFromDef(d) for d in spec.get("pants_app_defs", [])]
+    pants_apps = [n for n in pants_apps if n is not None]
+    print(
+        f"[YOLO Collector] {prefix}: {len(victim_nodes)} victims, "
+        f"{len(shirt_apps)} shirt apps, {len(pants_apps)} pants apps.",
+        flush=True,
+    )
 
-    counts = dict(uav_pos=0, uav_neg=0, rover_pos=0, rover_neg=0, skipped=0)
+    def randomize_victims():
+        """Relocate every casualty to a fresh terrain-aligned random spot + random clothing colors."""
+        placed = []
+        for node in victim_nodes:
+            for _ in range(25):
+                vx = rng.uniform(-17.5, 17.5)
+                vy = rng.uniform(-11.5, 11.5)
+                if all(math.hypot(vx - px, vy - py) >= 3.2 for px, py in placed):
+                    break
+            placed.append((vx, vy))
+            vz = float(height_at(meta, vx, vy))
+            vyaw = rng.uniform(-math.pi, math.pi)
+            rot_aa = _ground_aligned_axis_angle(meta, vx, vy, vyaw)
+            tf = node.getField("translation")
+            rf = node.getField("rotation")
+            if tf is not None:
+                tf.setSFVec3f([vx, vy, vz])
+            if rf is not None:
+                rf.setSFRotation(rot_aa)
+        for app in shirt_apps:
+            cf = app.getField("baseColor")
+            if cf is not None:
+                base = rng.choice(SHIRT_COLORS)
+                jittered = [float(np.clip(c + rng.uniform(-0.06, 0.06), 0.05, 0.95)) for c in base]
+                cf.setSFColor(jittered)
+        for app in pants_apps:
+            cf = app.getField("baseColor")
+            if cf is not None:
+                base = rng.choice(PANTS_COLORS)
+                jittered = [float(np.clip(c + rng.uniform(-0.05, 0.05), 0.04, 0.90)) for c in base]
+                cf.setSFColor(jittered)
+        for _ in range(2):
+            sim.step(step_ms)
+        return [_node_pose(n) for n in victim_nodes]
+
+    victims = randomize_victims()
+    counts = dict(uav_pos=0, uav_neg=0, rover_pos=0, rover_neg=0, skipped=0, refreshes=1)
     saved_idx = 0
 
     def capture_sample(mode, eye, rot_aa, expect_positive):
@@ -201,32 +284,38 @@ def main():
         counts[f"{mode}_{'pos' if expect_positive else 'neg'}"] += 1
         return True
 
-    # 1. UAV positive views across varied altitudes (11..21.5 m), yaws, offsets, slight obliques.
+    # 1. UAV positive views across randomized victim positions, 16 shirt colors, altitudes 10.5..22 m.
     target_uav_pos = int(spec["uav_pos"])
+    refresh_every = max(3, int(spec.get("refresh_every", 4)))
     attempts = 0
-    while counts["uav_pos"] < target_uav_pos and attempts < target_uav_pos * 4:
+    since_refresh = 0
+    while counts["uav_pos"] < target_uav_pos and attempts < target_uav_pos * 5:
         attempts += 1
+        if since_refresh >= refresh_every:
+            victims = randomize_victims()
+            counts["refreshes"] += 1
+            since_refresh = 0
         v_pos, _ = rng.choice(victims)
-        alt = rng.uniform(11.0, 21.5)
-        dx = rng.uniform(-5.8, 5.8)
-        dy = rng.uniform(-4.2, 4.2)
-        pitch_ob = rng.uniform(0.0, 0.24) if rng.random() < 0.35 else 0.0
+        alt = rng.uniform(10.5, 22.0)
+        dx = rng.uniform(-6.0, 6.0)
+        dy = rng.uniform(-4.4, 4.4)
+        pitch_ob = rng.uniform(0.0, 0.25) if rng.random() < 0.35 else 0.0
         yaw = rng.uniform(-math.pi, math.pi)
         roll = rng.uniform(-0.04, 0.04)
         ex, ey = v_pos[0] + dx, v_pos[1] + dy
         gz = float(height_at(meta, ex, ey))
         ez = max(gz + alt, v_pos[2] + alt)
         if pitch_ob > 0.0:
-            # Aim slightly toward victim with random jitter for oblique frames.
             tx = v_pos[0] + rng.uniform(-2.5, 2.5)
             ty = v_pos[1] + rng.uniform(-2.5, 2.5)
             rot_aa = look_at_rotation([ex, ey, ez], [tx, ty, v_pos[2]])
         else:
             rot_aa = _nadir_oblique_rot(yaw, 0.0, roll)
-        capture_sample("uav", [ex, ey, ez], rot_aa, expect_positive=True)
+        if capture_sample("uav", [ex, ey, ez], rot_aa, expect_positive=True):
+            since_refresh += 1
 
-    # 2. Rover ground-level positive views (distances 1.0..4.5 m, full 360° around casualties).
-    target_rov_pos = int(spec["rover_pos"])
+    # 2. Optional Rover positive views (0 when focusing pure aerial specialist).
+    target_rov_pos = int(spec.get("rover_pos", 0))
     attempts = 0
     while counts["rover_pos"] < target_rov_pos and attempts < target_rov_pos * 5:
         attempts += 1
@@ -242,8 +331,7 @@ def main():
         rot_aa = look_at_rotation([ex, ey, ez], [tx, ty, tz])
         capture_sample("rover", [ex, ey, ez], rot_aa, expect_positive=True)
 
-    # Move casualties out of the scene to capture pure hard-negative background views
-    # (collapsed houses, fallen logs, boulders, tree shadows, bushes, gullies).
+    # Move casualties out of the scene to capture pure hard-negative background views.
     for node in victim_nodes:
         tf = node.getField("translation")
         if tf is not None:
@@ -257,15 +345,15 @@ def main():
     attempts = 0
     while counts["uav_neg"] < target_uav_neg and attempts < target_uav_neg * 3:
         attempts += 1
-        ex = rng.uniform(-16.0, 16.0)
-        ey = rng.uniform(-11.0, 11.0)
-        alt = rng.uniform(12.0, 21.5)
+        ex = rng.uniform(-16.5, 16.5)
+        ey = rng.uniform(-11.5, 11.5)
+        alt = rng.uniform(11.0, 22.0)
         ez = float(height_at(meta, ex, ey)) + alt
-        rot_aa = _nadir_oblique_rot(rng.uniform(-math.pi, math.pi), rng.uniform(0.0, 0.20))
+        rot_aa = _nadir_oblique_rot(rng.uniform(-math.pi, math.pi), rng.uniform(0.0, 0.22))
         capture_sample("uav", [ex, ey, ez], rot_aa, expect_positive=False)
 
-    # 4. Rover ground-level hard-negative views.
-    target_rov_neg = int(spec["rover_neg"])
+    # 4. Optional Rover hard-negative background views.
+    target_rov_neg = int(spec.get("rover_neg", 0))
     attempts = 0
     while counts["rover_neg"] < target_rov_neg and attempts < target_rov_neg * 3:
         attempts += 1

@@ -5,6 +5,8 @@ import csv
 import json
 import math
 import os
+import random
+import re
 import shutil
 import subprocess
 import sys
@@ -15,15 +17,143 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from aerial_products import export_products
+from build_search_worlds import replace_node
+from metrics import height_at
 from run_search import ROOT, executable_path, simulator_has_errors
 from run_uav_mapping import PROFILES, refinement_metrics, survey_metrics
 from run_uav_navigation import OBSTACLE_PRESETS, build_nav_world
+from scene_elements import RescueElements
 from uav_full_preview import draw_aerial_products, draw_full_preview, draw_refinement_preview
 from uav_map_preview import audit_alignment, draw_preview, load_prior
 
 sys.path.insert(0, str(ROOT / "controllers/uav_mapper"))
 from aerial_victims import detect_victims_from_saved_survey
 from survey_map import BLOCKED, FREE, UNKNOWN
+
+
+RANDOM_SHIRT_COLORS = [
+    ("crimson", ".76 .14 .14"),
+    ("orange", ".88 .42 .08"),
+    ("olive", ".36 .42 .22"),
+    ("mustard", ".82 .68 .16"),
+    ("light_gray", ".82 .82 .80"),
+    ("charcoal", ".24 .25 .27"),
+    ("teal", ".14 .48 .50"),
+    ("brown", ".46 .28 .18"),
+    ("burgundy", ".48 .14 .22"),
+    ("sky_blue", ".38 .62 .84"),
+]
+
+RANDOM_PANTS_COLORS = [
+    ".18 .20 .24",
+    ".44 .40 .30",
+    ".26 .30 .22",
+    ".30 .22 .16",
+    ".12 .12 .13",
+    ".48 .48 .50",
+]
+
+
+def _terrain_slope_deg(terrain, x, y, delta=0.45):
+    dx = (height_at(terrain, x + delta, y) - height_at(terrain, x - delta, y)) / (2.0 * delta)
+    dy = (height_at(terrain, x, y + delta) - height_at(terrain, x, y - delta)) / (2.0 * delta)
+    return math.degrees(math.atan(math.hypot(dx, dy)))
+
+
+def sample_random_victims_d(config, seed, count=3, random_clothing=False):
+    """Sample valid, non-overlapping random victim poses inside the survey bounds (offline world-gen only)."""
+    terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8"))
+    base_b = json.loads((ROOT / "evaluation/scenarios/B.json").read_text(encoding="utf-8"))
+    rng = random.Random(int(seed))
+
+    (bx0, by0), (bx1, by1) = config["bounds_enu_m"]
+    margin = 2.5 if (bx1 - bx0) <= 25 else 6.0
+    x_lo, x_hi = bx0 + margin, bx1 - margin
+    y_lo, y_hi = by0 + margin, by1 - margin
+    deploy_xy = tuple(config["deployment_xy_enu_m"])
+
+    trees = terrain.get("forest", {}).get("trees", [])
+    bushes = terrain.get("forest", {}).get("bushes", [])
+    obstacles = base_b.get("obstacles", [])
+
+    victims = []
+    min_pair = 4.0 if (bx1 - bx0) <= 25 else 7.5
+    for idx in range(1, count + 1):
+        chosen = None
+        for _ in range(1200):
+            x = rng.uniform(x_lo, x_hi)
+            y = rng.uniform(y_lo, y_hi)
+            if math.hypot(x - deploy_xy[0], y - deploy_xy[1]) < 4.5:
+                continue
+            if any(math.hypot(x - v["xy"][0], y - v["xy"][1]) < min_pair for v in victims):
+                continue
+            if _terrain_slope_deg(terrain, x, y) > 14.5:
+                continue
+            # Avoid clipping into trees, bushes, collapsed houses, or static boulders.
+            if any(math.hypot(x - t["xy"][0], y - t["xy"][1]) < 2.6 for t in trees):
+                continue
+            if any(math.hypot(x - b["xy"][0], y - b["xy"][1]) < 1.7 for b in bushes):
+                continue
+            if any(math.hypot(x - o["xy"][0], y - o["xy"][1]) < (max(o["size"][:2]) * 0.65 + 1.5) for o in obstacles):
+                continue
+            chosen = (round(x, 2), round(y, 2))
+            break
+        if chosen is None:
+            raise RuntimeError(f"Failed to sample valid random victim #{idx} for seed={seed}")
+        color_name, shirt_rgb = rng.choice(RANDOM_SHIRT_COLORS) if random_clothing else ("default_blue", None)
+        pants_rgb = rng.choice(RANDOM_PANTS_COLORS) if random_clothing else None
+        victims.append(dict(
+            id=idx,
+            xy=list(chosen),
+            yaw_rad=round(rng.uniform(-math.pi, math.pi), 4),
+            shirt_name=color_name,
+            shirt_rgb=shirt_rgb,
+            pants_rgb=pants_rgb,
+        ))
+    return victims, terrain
+
+
+def apply_random_victims_to_world(world_path, victims, terrain):
+    """Replace the 3 victim Solid nodes in the temporary validation world with randomized placements."""
+    scene = world_path.read_text(encoding="utf-8")
+    # Remove the 3 default victim nodes from the temporary world.
+    for pat in (
+        r"\bDEF\s+CASUALTY\s+Solid",
+        r"\bDEF\s+SEARCH_VICTIM_2\s+Solid",
+        r"\bDEF\s+SEARCH_VICTIM_3\s+Solid",
+    ):
+        if re.search(pat, scene):
+            scene = replace_node(scene, pat, "")
+
+    for idx, v in enumerate(victims, 1):
+        vkey = ("A", "B", "C")[(idx - 1) % 3]
+        el = RescueElements(dict(key=vkey, seed=900 + idx * 31, goal=v["xy"]),
+                            lambda x, y: height_at(terrain, x, y))
+        el.casualty()
+        node = el.nodes[0]
+        def_name = "CASUALTY" if idx == 1 else f"SEARCH_VICTIM_{idx}"
+        node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
+        node = node.replace('name "casualty"', f'name "search victim {idx}"', 1)
+        # Apply randomized yaw via ground_frame rotation directly on the outer Solid node.
+        from scene_elements import axis_angle, ground_frame
+        rot = axis_angle(ground_frame(v["xy"][0], v["xy"][1], v["yaw_rad"],
+                                      lambda x, y: height_at(terrain, x, y)))
+        rot_str = " ".join(f"{val:.6f}" for val in rot)
+        node = re.sub(r"rotation\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
+                      f"rotation {rot_str}", node, count=1)
+        if v.get("shirt_rgb"):
+            lines = []
+            for line in node.splitlines():
+                if "_shirt.obj" in line:
+                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
+                                  f"baseColor {v['shirt_rgb']}", line, count=1)
+                elif "_pants.obj" in line and v.get("pants_rgb"):
+                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
+                                  f"baseColor {v['pants_rgb']}", line, count=1)
+                lines.append(line)
+            node = "\n".join(lines)
+        scene += "\n" + node + "\n"
+    world_path.write_text(scene, encoding="utf-8")
 
 
 def draw_rescue_preview(folder, eval_summary, rover_status, victims_doc):
@@ -92,7 +222,8 @@ def draw_rescue_preview(folder, eval_summary, rover_status, victims_doc):
         draw.line(poly, fill="#ffffff", width=3, joint="curve")
 
     # Draw evaluation-only ground-truth victim locations as subtle red crosshairs.
-    truth_file = ROOT / "evaluation/search/D.json"
+    override_file = folder / "evaluation/truth_override.json"
+    truth_file = override_file if override_file.is_file() else ROOT / "evaluation/search/D.json"
     if truth_file.is_file():
         truth = json.loads(truth_file.read_text(encoding="utf-8"))
         for v in truth.get("victims", []):
@@ -280,17 +411,23 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
 
 
 def run(profile="full", detector="yolo", planner="igha_vctp",
-        max_victims=2, refinement_strategy="route_value",
+        max_victims=2, refinement_strategy="route_value", nadir_only=False,
+        victim_seed=None, random_clothing=False,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
         port=18578, timeout=360.0):
+    if victim_seed is not None and map_from is not None:
+        raise ValueError("--victim-seed / --random-victims requires a fresh UAV survey (omit --map-from).")
     config = json.loads((ROOT / "config/scenes" / PROFILES[profile]).read_text(encoding="utf-8"))
-    if refinement_strategy and "refinement" in config:
+    if nadir_only:
+        config.pop("refinement", None)
+    elif refinement_strategy and "refinement" in config:
         config["refinement"]["strategy"] = refinement_strategy
     injected = [] if obstacle == "none" else OBSTACLE_PRESETS[(profile, obstacle)]
     obs_tag = "clear" if obstacle == "none" else obstacle
+    rand_tag = f"_randv{victim_seed}" if victim_seed is not None else ""
 
-    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}{rand_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
     folder = ROOT / "runs" / run_id
     folder.mkdir(parents=True)
     (folder / "map_config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -324,6 +461,30 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
 
     world = ROOT / "worlds" / f"_validation_{run_id}.wbt"
     build_nav_world(world, config, injected, reuse_map=reuse_map)
+    randomized_victims = None
+    if victim_seed is not None:
+        v_count = 2 if profile == "local" else 3
+        randomized_victims, terrain = sample_random_victims_d(
+            config, seed=victim_seed, count=v_count, random_clothing=random_clothing,
+        )
+        apply_random_victims_to_world(world, randomized_victims, terrain)
+        eval_dir = folder / "evaluation"
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        # Evaluator-only truth override; NEVER read by UAV or rover controllers.
+        (eval_dir / "truth_override.json").write_text(
+            json.dumps(dict(
+                evaluation_only=True,
+                victim_seed=int(victim_seed),
+                random_clothing=bool(random_clothing),
+                victims=randomized_victims,
+            ), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(
+            f"[Run rescue] Spawned {len(randomized_victims)} randomized victim(s) (seed={victim_seed}, "
+            f"random_clothing={random_clothing}); truth kept evaluator-only.",
+            flush=True,
+        )
     executable = executable_path()
     if not executable.is_file():
         raise FileNotFoundError(f"Webots executable not found: {executable}")
@@ -434,6 +595,14 @@ def main():
     parser.add_argument("--max-victims", type=int, default=2,
                         help="Maximum number of supply crates / victims to visit in one sortie (default: 2).")
     parser.add_argument("--refinement-strategy", choices=("density", "route_value"), default="route_value")
+    parser.add_argument("--nadir-only", action="store_true",
+                        help="Skip oblique refinement pass for faster fresh-flight runs.")
+    parser.add_argument("--random-victims", action="store_true",
+                        help="Randomize victim positions in Scene D using a fresh seed (requires fresh UAV flight).")
+    parser.add_argument("--victim-seed", type=int, default=None,
+                        help="Explicit integer seed for randomized victim spawning in Scene D.")
+    parser.add_argument("--random-clothing", action="store_true",
+                        help="Also randomize victim shirt & pants colors when spawning random victims.")
     parser.add_argument("--obstacle", choices=("none", "detour", "block"), default="none")
     parser.add_argument("--map-from", default=None,
                         help="Reuse an existing UAV survey folder (runs sensor-only victim detection on its frames).")
@@ -447,12 +616,18 @@ def main():
     parser.add_argument("--port", type=int, default=18578)
     parser.add_argument("--timeout", type=float, default=360.0)
     args = parser.parse_args()
+    vseed = args.victim_seed
+    if args.random_victims and vseed is None:
+        vseed = int(time.time()) % 100000
     run(
         profile=args.profile,
         detector=args.detector,
         planner=args.planner,
         max_victims=args.max_victims,
         refinement_strategy=args.refinement_strategy,
+        nadir_only=args.nadir_only,
+        victim_seed=vseed,
+        random_clothing=args.random_clothing,
         obstacle=args.obstacle,
         map_from=args.map_from,
         visible=args.visible,
