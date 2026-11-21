@@ -15,15 +15,25 @@ def attitude_matrix(roll, pitch, yaw):
         [[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
 
 
-def aerial_pixel_enu(pixel, width, height, fov, gps, attitude):
-    """Planar optical-axis depth, FLU camera, fixed downward mount Ry(pi/2)."""
-    u, v, depth = pixel
+def aerial_camera_rotation(attitude, body_rotation=None):
+    """Camera-to-ENU rotation for the drone's downward FLU camera."""
+    body = attitude_matrix(*attitude) if body_rotation is None else body_rotation
+    return body @ attitude_matrix(0, math.pi / 2, 0)
+
+
+def aerial_pixels_enu(pixels, width, height, fov, gps, attitude, *, body_rotation=None):
+    """Project (..., 3) image coordinates and optical-axis depths to ENU."""
+    u, v, depth = np.moveaxis(np.asarray(pixels, dtype=float), -1, 0)
     focal = width / (2 * math.tan(fov / 2))
-    ray = np.array([depth, -(u - (width - 1) / 2) * depth / focal,
-                    -(v - (height - 1) / 2) * depth / focal])
-    mount = attitude_matrix(0, math.pi / 2, 0)
+    rays = np.stack((depth, -(u - (width - 1) / 2) * depth / focal,
+                     -(v - (height - 1) / 2) * depth / focal), axis=-1)
     # GPS is mounted at the camera optical centre; its readings include noise.
-    return np.asarray(gps) + attitude_matrix(*attitude) @ mount @ ray
+    orientation = aerial_camera_rotation(attitude, body_rotation)
+    return rays @ orientation.T + np.asarray(gps)
+
+
+def aerial_pixel_enu(pixel, width, height, fov, gps, attitude):
+    return aerial_pixels_enu(pixel, width, height, fov, gps, attitude)
 
 
 def aerial_candidates(detector, bgr, depth, gps, attitude, fov=1.1):

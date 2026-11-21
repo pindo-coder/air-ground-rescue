@@ -47,7 +47,7 @@ tracks=TrackManager(independent_groups=METHODS[method]["independent"],score_min=
                     radius_95=configuration["report_radius_95_m"],
                     require_cross_source=fusion_enabled and public_task.get('require_cross_source_confirmation',False))
 scheduler=MissionScheduler(method,configuration["cargo_capacity"],configuration["distance_budget_m"])
-motors=[robot.getDevice(n) for n in ("left_motor","right_motor")]
+motors=[robot.getDevice(n) for n in ("left_motor::front","right_motor::front")]
 wheels=[robot.getDevice(n) for n in ("left_encoder","right_encoder")]
 for motor in motors:
     motor.setPosition(float("inf"));motor.setVelocity(0.)

@@ -1,6 +1,8 @@
 """RGB-D candidates, correlated-evidence tracks and active observation poses."""
 from dataclasses import dataclass, field
+from pathlib import Path
 import math
+import os
 import cv2
 import numpy as np
 from mapping import rotation, wrap
@@ -41,32 +43,49 @@ def covariance_intersection(a, pa, b, pb):
 
 
 class PersonDetector:
-    def __init__(self, mode, root, bias_std=.18, max_depth=8., field_of_view=math.pi/2):
+    def __init__(self, mode, root, bias_std=.18, max_depth=8., field_of_view=math.pi/2, view=None):
         if mode not in ("yolo","surrogate_rgbd"):
             raise ValueError(f"Unknown detector: {mode}")
         self.mode=mode
         self.bias_std=bias_std
         self.max_depth=max_depth
         self.field_of_view=field_of_view
+        self.view = view or ("aerial" if max_depth >= 12.0 else "ground")
         self.model = None
+        self.yolo_single_pass = False
         if mode == "yolo":
             from ultralytics import YOLO,settings
             settings.update({"sync":False})
-            if not (root/"models/yolo11n.pt").is_file():
-                raise FileNotFoundError("Run python tools/fetch_search_model.py before selecting yolo")
-            self.model = YOLO(str(root/"models/yolo11n.pt"))
+            override = os.environ.get("UAV_YOLO_WEIGHTS")
+            if override:
+                weights = Path(override)
+                if not weights.is_absolute():
+                    weights = Path(root) / weights
+            elif self.view == "aerial":
+                finetuned = Path(root) / "models/yolo11n_victim.pt"
+                weights = finetuned if finetuned.is_file() else Path(root) / "models/yolo11n.pt"
+            else:
+                weights = Path(root) / "models/yolo11n.pt"
+            if not weights.is_file():
+                raise FileNotFoundError(f"YOLO weights not found: {weights} (run tools/fetch_search_model.py or tools/train_yolo_victim.py)")
+            self.weights_path = weights
+            self.model = YOLO(str(weights))
+            # Fine-tuned single-class aerial victim model is trained with 360-deg rotation augmentation.
+            self.yolo_single_pass = len(getattr(self.model, "names", {})) == 1
 
     def detect(self, bgr, depth):
         if self.model is not None:
             boxes=[];scores=[]
-            for turns in range(4):
-                view=np.ascontiguousarray(np.rot90(bgr,-turns))
-                output=self.model.predict(view,conf=.35,classes=[0],imgsz=640,device="cpu",verbose=False)[0]
+            conf_thr = .50 if self.yolo_single_pass else .35
+            rotations = (0,) if self.yolo_single_pass else range(4)
+            for turns in rotations:
+                view=bgr if turns==0 else np.ascontiguousarray(np.rot90(bgr,-turns))
+                output=self.model.predict(view,conf=conf_thr,classes=[0],imgsz=640,device="cpu",verbose=False)[0]
                 for box,score in zip(output.boxes.xyxy.cpu().numpy(),output.boxes.conf.cpu().numpy()):
                     x1,y1,x2,y2=unrotate_box(box,turns,bgr.shape[1],bgr.shape[0])
                     boxes.append([x1,y1,x2-x1,y2-y1]);scores.append(float(score))
             if not boxes:return []
-            keep=np.asarray(cv2.dnn.NMSBoxes(boxes,scores,.35,.45)).reshape(-1)
+            keep=np.asarray(cv2.dnn.NMSBoxes(boxes,scores,conf_thr,.45)).reshape(-1)
             return [([int(boxes[i][0]),int(boxes[i][1]),int(boxes[i][0]+boxes[i][2]),
                       int(boxes[i][1]+boxes[i][3])],scores[i],None) for i in keep]
         # Controlled pipeline test. This colour/size filter is not a general person detector.

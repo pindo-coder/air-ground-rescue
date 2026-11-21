@@ -1,0 +1,50 @@
+#VRML_SIM R2025a utf8
+# tags: hidden
+# template language: javascript
+# Corner-cut housing with beveled upper and lower edges, for visual geometry.
+PROTO BeveledBox [
+  field SFVec3f size 1 1 1
+  field SFFloat bevel 0.05
+] {
+  %<
+    const size = fields.size.value;
+    const x = size.x / 2;
+    const y = size.y / 2;
+    const z = size.z / 2;
+    const bevel = Math.min(fields.bevel.value, 0.42 * Math.min(x, y, z));
+    const rings = [
+      [x - bevel, y - bevel, -z, bevel],
+      [x, y, -z + bevel, 1.4 * bevel],
+      [x, y, z - bevel, 1.4 * bevel],
+      [x - bevel, y - bevel, z, bevel]
+    ];
+  >%
+  IndexedFaceSet {
+    coord Coordinate {
+      point [
+        %< for (const [a, b, height, corner] of rings) { >%
+          %<= -a + corner >% %<= -b >% %<= height >%
+          %<= a - corner >% %<= -b >% %<= height >%
+          %<= a >% %<= -b + corner >% %<= height >%
+          %<= a >% %<= b - corner >% %<= height >%
+          %<= a - corner >% %<= b >% %<= height >%
+          %<= -a + corner >% %<= b >% %<= height >%
+          %<= -a >% %<= b - corner >% %<= height >%
+          %<= -a >% %<= -b + corner >% %<= height >%
+        %< } >%
+      ]
+    }
+    coordIndex [
+      7 6 5 4 3 2 1 0 -1
+      %< for (let ring = 0; ring < 3; ++ring) {
+           for (let side = 0; side < 8; ++side) {
+             const from = ring * 8 + side;
+             const to = ring * 8 + (side + 1) % 8;
+      >%
+        %<= from >% %<= to >% %<= to + 8 >% %<= from + 8 >% -1
+      %<   }
+         } >%
+      24 25 26 27 28 29 30 31 -1
+    ]
+  }
+}
