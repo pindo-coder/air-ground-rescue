@@ -488,11 +488,17 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
 def run(profile="full", detector="yolo", planner="igha_vctp",
         max_victims=2, refinement_strategy="route_value", nadir_only=False,
         victim_seed=None, random_clothing=False,
+        local_policy="rule", checkpoint=None,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
         port=18578, timeout=360.0):
     if victim_seed is not None and map_from is not None:
         raise ValueError("--victim-seed / --random-victims requires a fresh UAV survey (omit --map-from).")
+    if local_policy == "neural" and not checkpoint:
+        raise ValueError("--checkpoint is required when --local-policy neural.")
+    checkpoint_path = Path(checkpoint).resolve() if checkpoint else None
+    if checkpoint_path is not None and not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Local policy checkpoint not found: {checkpoint_path}")
     config = json.loads((ROOT / "config/scenes" / PROFILES[profile]).read_text(encoding="utf-8"))
     if nadir_only:
         config.pop("refinement", None)
@@ -580,6 +586,8 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         UAV_RESCUE_DETECTOR=detector,
         UAV_RESCUE_MAX_VICTIMS=str(max_victims),
         UAV_NAV_PLANNER=planner,
+        UAV_LOCAL_POLICY=local_policy,
+        UAV_LOCAL_CHECKPOINT=str(checkpoint_path) if checkpoint_path else "",
         UAV_NAV_TIMEOUT_S=str(timeout),
         UAV_NAV_KEEP_OPEN="1" if keep_open else "0",
         UAV_RECORD_VIDEO="1" if record_video else "0",
@@ -678,6 +686,10 @@ def main():
                         help="Explicit integer seed for randomized victim spawning in Scene D.")
     parser.add_argument("--random-clothing", action="store_true",
                         help="Also randomize victim shirt & pants colors when spawning random victims.")
+    parser.add_argument("--local-policy", choices=("rule", "neural"), default="rule",
+                        help="Onboard rover local planner: rule baseline or neural network checkpoint.")
+    parser.add_argument("--checkpoint", default=None,
+                        help="Path to trained PyTorch local policy checkpoint (.pt) for --local-policy neural.")
     parser.add_argument("--obstacle", choices=("none", "detour", "block"), default="none")
     parser.add_argument("--map-from", default=None,
                         help="Reuse an existing UAV survey folder (runs sensor-only victim detection on its frames).")
@@ -703,6 +715,8 @@ def main():
         nadir_only=args.nadir_only,
         victim_seed=vseed,
         random_clothing=args.random_clothing,
+        local_policy=args.local_policy,
+        checkpoint=args.checkpoint,
         obstacle=args.obstacle,
         map_from=args.map_from,
         visible=args.visible,
