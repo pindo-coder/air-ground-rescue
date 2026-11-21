@@ -1,0 +1,60 @@
+{
+  "bounds_enu_m": [
+    [-42, -30],
+    [42, 30]
+  ],
+  "resolution_m": 0.5,
+  "ground_seed_xy_enu_m": [-20.25, -12.25],
+  "deployment_xy_enu_m": [-20.25, -13.25],
+  "route_goals": [
+    {
+      "id": "valley",
+      "label": "绕过冲沟至东侧接近点",
+      "xy_enu_m": [14.25, -9.75]
+    },
+    {
+      "id": "north",
+      "label": "绕坡至北侧观察点",
+      "xy_enu_m": [0.25, 18.75]
+    },
+    {
+      "id": "forest",
+      "label": "林下待核实点",
+      "xy_enu_m": [-15.25, -2.25]
+    }
+  ],
+  "rover_radius_m": 0.4,
+  "max_slope_deg": 18,
+  "sample_stride_px": 3,
+  "refinement": {
+    "patch_count": 3,
+    "patch_radius_m": 3.5,
+    "angle_from_vertical_deg": 37.0,
+    "altitude_enu_m": 17.0,
+    "transfer_speed_mps": 7.0
+  },
+  "flight": {
+    "waypoints_xy_enu_m": [
+      [-40, -28.5],
+      [40, -28.5],
+      [40, -21.375],
+      [-40, -21.375],
+      [-40, -14.25],
+      [40, -14.25],
+      [40, -7.125],
+      [-40, -7.125],
+      [-40, 0],
+      [40, 0],
+      [40, 7.125],
+      [-40, 7.125],
+      [-40, 14.25],
+      [40, 14.25],
+      [40, 21.375],
+      [-40, 21.375],
+      [-40, 28.5],
+      [40, 28.5]
+    ],
+    "speed_mps": 5,
+    "altitude_enu_m": 19
+  }
+}

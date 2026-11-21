@@ -18,7 +18,7 @@ public_out = root / "runs" / run_id / scenario_id / "observations"
 public_out.mkdir(parents=True, exist_ok=True)
 (public_out / "initial_task.json").write_text(json.dumps(task, indent=2), encoding="utf-8")
 cameras = [robot.getDevice(n) for n in ("camera_left", "camera_right")]
-motors = [robot.getDevice(n) for n in ("left_motor", "right_motor")]
+motors = [robot.getDevice(n) for n in ("left_motor::front", "right_motor::front")]
 for camera in cameras:
     camera.enable(period)
 for motor in motors:

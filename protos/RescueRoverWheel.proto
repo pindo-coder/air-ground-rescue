@@ -1,0 +1,211 @@
+#VRML_SIM R2025a utf8
+# tags: hidden
+# template language: javascript
+# Rugged 5-spoke beadlock off-road drive wheel. Physics & contact geometry unchanged.
+PROTO RescueRoverWheel [
+  field SFVec3f anchor 0 0 .09
+  field SFString name "drive wheel"
+  field SFString motorName "drive_motor"
+  field SFString encoderName ""
+] {
+  %<
+    const segments = 36;
+    const sidewall = [[.054, -.0275], [.072, -.0275], [.082, -.0240], [.0855, -.018],
+                      [.0855, .018], [.082, .0240], [.072, .0275], [.054, .0275]];
+    const bands = [
+      { z: [-.023, -.0025], phase: 0, sweep: .125 },
+      { z: [.0025, .023], phase: .130, sweep: -.125 }
+    ];
+    const lugPoints = [];
+    function ringPoint(radius, angle, height) {
+      return [radius * Math.cos(angle), radius * Math.sin(angle), height];
+    }
+    for (let lug = 0; lug < 22; ++lug) {
+      for (const band of bands) {
+        const angle = lug * Math.PI / 11 + band.phase;
+        const low = angle - .058;
+        const high = angle + .058;
+        for (const radius of [.090, .080]) {
+          lugPoints.push(ringPoint(radius, low, band.z[0]),
+                         ringPoint(radius, high, band.z[0]),
+                         ringPoint(radius, high + band.sweep, band.z[1]),
+                         ringPoint(radius, low + band.sweep, band.z[1]));
+        }
+      }
+    }
+    const faces = [
+      [0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1], [1, 5, 6, 2],
+      [2, 6, 7, 3], [3, 7, 4, 0]
+    ];
+  >%
+  HingeJoint {
+    jointParameters HingeJointParameters {
+      axis 0 1 0
+      anchor IS anchor
+      dampingConstant .01
+    }
+    device [
+      # Webots relays commands to motors that share the prefix before "::".
+      RotationalMotor { name IS motorName maxVelocity 10 maxTorque 2.5 sound "" }
+      %< if (fields.encoderName.value !== '') { >%
+        PositionSensor { name IS encoderName }
+      %< } >%
+    ]
+    endPoint DEF TIRE Solid {
+      translation IS anchor
+      rotation 1 0 0 1.5707963268
+      name IS name
+      contactMaterial "rubber"
+      children [
+        # Tire carcass
+        Shape {
+          appearance DEF TIRE_RUBBER PBRAppearance { baseColor .055 .060 .062 roughness .94 metalness 0 }
+          geometry IndexedFaceSet {
+            creaseAngle .75
+            coord Coordinate {
+              point [
+                %< for (const [radius, height] of sidewall) {
+                     for (let i = 0; i < segments; ++i) { >%
+                       %<= ringPoint(radius, i * 2 * Math.PI / segments, height).join(' ') >%
+                %<   }
+                   } >%
+              ]
+            }
+            coordIndex [
+              %< for (let ring = 0; ring < sidewall.length; ++ring) {
+                   const nextRing = (ring + 1) % sidewall.length;
+                   for (let i = 0; i < segments; ++i) {
+                     const next = (i + 1) % segments;
+              >%
+                %<= ring * segments + i >% %<= ring * segments + next >%
+                %<= nextRing * segments + next >% %<= nextRing * segments + i >% -1
+              %<   }
+                 } >%
+            ]
+          }
+        }
+        # Deep chevron mud-terrain tread lugs
+        Shape {
+          appearance PBRAppearance { baseColor .078 .082 .082 roughness .90 metalness 0 }
+          geometry IndexedFaceSet {
+            coord Coordinate {
+              point [
+                %< for (const point of lugPoints) { >%
+                  %<= point.join(' ') >%
+                %< } >%
+              ]
+            }
+            coordIndex [
+              %< for (let begin = 0; begin < lugPoints.length; begin += 8) {
+                   for (const [a, b, c, d] of faces) { >%
+                     %<= begin + a >% %<= begin + b >% %<= begin + c >% -1
+                     %<= begin + a >% %<= begin + c >% %<= begin + d >% -1
+              %<   }
+                 } >%
+            ]
+          }
+        }
+        # Recessed dark-gunmetal inner wheel barrel
+        Shape {
+          appearance DEF WHEEL_GUNMETAL PBRAppearance {
+            baseColor .14 .16 .18
+            roughness .38
+            metalness .78
+          }
+          geometry Cylinder { radius .055 height .036 subdivision 32 }
+        }
+        # Sculpted 5-spoke alloy rim + beadlock ring + bolts on both faces
+        %< for (const side of [-1, 1]) { >%
+          Pose {
+            translation 0 0 %<= side * .0225 >%
+            children [
+              # Outer beadlock clamp lip
+              Shape {
+                appearance DEF BEADLOCK_METAL PBRAppearance {
+                  baseColor .48 .52 .54
+                  roughness .30
+                  metalness .84
+                }
+                geometry Cylinder { radius .056 height .006 subdivision 32 }
+              }
+              # Recessed dark rim cavity
+              Pose {
+                translation 0 0 %<= side * .0016 >%
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor .09 .11 .13 roughness .46 metalness .68 }
+                    geometry Cylinder { radius .047 height .0045 subdivision 32 }
+                  }
+                ]
+              }
+              # 5 heavy-duty sculpted radial spokes
+              %< for (let spoke = 0; spoke < 5; ++spoke) {
+                   const ang = spoke * 2 * Math.PI / 5;
+              >%
+                Pose {
+                  translation %<= .027 * Math.cos(ang) >% %<= .027 * Math.sin(ang) >% %<= side * .0024 >%
+                  rotation 0 0 1 %<= ang >%
+                  children [
+                    Shape {
+                      appearance USE WHEEL_GUNMETAL
+                      geometry Box { size .042 .012 .0055 }
+                    }
+                  ]
+                }
+              %< } >%
+              # Center hub & rescue-orange locking cap
+              Pose {
+                translation 0 0 %<= side * .0038 >%
+                children [
+                  Shape {
+                    appearance USE BEADLOCK_METAL
+                    geometry Cylinder { radius .018 height .0055 subdivision 20 }
+                  }
+                  Pose {
+                    translation 0 0 %<= side * .0025 >%
+                    children [
+                      Shape {
+                        appearance PBRAppearance { baseColor .84 .25 .07 roughness .38 metalness .32 }
+                        geometry Cylinder { radius .010 height .003 subdivision 16 }
+                      }
+                    ]
+                  }
+                ]
+              }
+              # 12 stainless beadlock perimeter bolts
+              %< for (let bolt = 0; bolt < 12; ++bolt) {
+                   const a = bolt * Math.PI / 6;
+              >%
+                Pose {
+                  translation %<= .0515 * Math.cos(a) >% %<= .0515 * Math.sin(a) >% %<= side * .0035 >%
+                  children [
+                    Shape {
+                      appearance PBRAppearance { baseColor .74 .78 .80 roughness .25 metalness .90 }
+                      geometry Cylinder { radius .0024 height .0025 subdivision 6 }
+                    }
+                  ]
+                }
+              %< } >%
+              # 5 lug nuts around center hub
+              %< for (let lug = 0; lug < 5; ++lug) {
+                   const a = lug * 2 * Math.PI / 5 + Math.PI / 5;
+              >%
+                Pose {
+                  translation %<= .0135 * Math.cos(a) >% %<= .0135 * Math.sin(a) >% %<= side * .0055 >%
+                  children [
+                    Shape {
+                      appearance PBRAppearance { baseColor .76 .80 .82 roughness .25 metalness .90 }
+                      geometry Cylinder { radius .0022 height .003 subdivision 6 }
+                    }
+                  ]
+                }
+              %< } >%
+            ]
+          }
+        %< } >%
+      ]
+      boundingObject Cylinder { radius .09 height .055 }
+      physics Physics { density -1 mass .25 }
+    }
+  }
+}

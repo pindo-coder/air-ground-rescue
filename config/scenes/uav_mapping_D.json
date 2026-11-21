@@ -1,0 +1,13 @@
+{
+  "bounds_enu_m": [[-23.0, -16.0], [-3.0, 4.0]],
+  "resolution_m": 0.5,
+  "ground_seed_xy_enu_m": [-20.25, -12.25],
+  "deployment_xy_enu_m": [-11.25, -3.25],
+  "waypoint_xy_enu_m": [-6.75, 2.75],
+  "rover_radius_m": 0.40,
+  "flight": {
+    "waypoints_xy_enu_m": [[-22.0, -13.0], [-5.0, -13.0], [-5.0, -6.0], [-22.0, -6.0], [-22.0, 1.0], [-5.0, 1.0]],
+    "speed_mps": 1.4,
+    "altitude_enu_m": 16.0
+  }
+}

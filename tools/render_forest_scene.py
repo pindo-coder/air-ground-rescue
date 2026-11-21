@@ -21,7 +21,12 @@ def preview_world():
     source=build('D');text=source.read_text(encoding='utf-8')
     private=json.loads((ROOT/'evaluation/search/D.json').read_text())
     x,y=private['spawn'];z=height_at(private,x,y)+.035;yaw=private['spawn_yaw']
-    proto=(ROOT/'protos/ResearchRover.proto').read_text()
+    proto = (ROOT / 'protos/ResearchRover.proto').read_text(encoding='utf-8')
+    imports = re.findall(r'^EXTERNPROTO "([^"]+)"', proto, flags=re.MULTILINE)
+    for filename in imports:
+        text = text.replace('EXTERNPROTO "../protos/ResearchRover.proto"',
+                            f'EXTERNPROTO "../protos/{filename}"\n'
+                            'EXTERNPROTO "../protos/ResearchRover.proto"', 1)
     a,b=node_span(proto,r'\bRobot');body=proto[a:b]
     substitutions=dict(translation=f'{x} {y} {z}',rotation=f'0 0 1 {yaw}',
         name='"Forest render rover"',controller='"forest_preview"',customData='"{}"')

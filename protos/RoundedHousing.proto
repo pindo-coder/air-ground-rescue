@@ -1,0 +1,58 @@
+#VRML_SIM R2025a utf8
+# tags: hidden
+# template language: javascript
+# A visual housing lofted between rounded rectangular sections.
+PROTO RoundedHousing [
+  field MFVec3f profile [ 1 1 -.5, 1 1 .5 ] # full length, full width, ascending z for each section
+  field SFFloat cornerRadius .05
+  field SFVec2f topOffset 0 0
+] {
+  %<
+    const sections = fields.profile.value;
+    const offset = fields.topOffset.value;
+    const sides = 4;
+    const pointsPerRing = 4 * (sides + 1);
+    const firstZ = sections[0].z;
+    const lastZ = sections[sections.length - 1].z;
+    const signs = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+    const points = [];
+    for (const section of sections) {
+      const x = section.x / 2;
+      const y = section.y / 2;
+      const radius = Math.max(1e-6, Math.min(fields.cornerRadius.value, .86 * Math.min(x, y)));
+      const shift = (section.z - firstZ) / (lastZ - firstZ);
+      for (const [corner, [sx, sy]] of signs.entries()) {
+        for (let step = 0; step <= sides; ++step) {
+          const angle = (corner + step / sides) * Math.PI / 2;
+          const px = sx * (x - radius) + radius * Math.cos(angle) + offset.x * shift;
+          const py = sy * (y - radius) + radius * Math.sin(angle) + offset.y * shift;
+          points.push([px, py, section.z]);
+        }
+      }
+    }
+    const cap = Array.from({length: pointsPerRing}, (_, i) => i);
+    const top = (sections.length - 1) * pointsPerRing;
+  >%
+  IndexedFaceSet {
+    creaseAngle .61
+    coord Coordinate {
+      point [
+        %< for (const point of points) { >%
+          %<= point.join(' ') >%
+        %< } >%
+      ]
+    }
+    coordIndex [
+      %<= [...cap].reverse().join(' ') >% -1
+      %< for (let ring = 0; ring < sections.length - 1; ++ring) {
+           for (let i = 0; i < pointsPerRing; ++i) {
+             const a = ring * pointsPerRing + i;
+             const b = ring * pointsPerRing + (i + 1) % pointsPerRing;
+      >%
+             %<= a >% %<= b >% %<= b + pointsPerRing >% %<= a + pointsPerRing >% -1
+      %<   }
+         } >%
+      %<= cap.map(i => top + i).join(' ') >% -1
+    ]
+  }
+}

@@ -9,6 +9,7 @@
 /config/search/public/*.json
 /evaluation/search/*.json
 /models/*.pt
+!/models/yolo11n_victim.pt
 
 # Python caches and local environments
 __pycache__/

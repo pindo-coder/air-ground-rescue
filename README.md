@@ -1,5 +1,7 @@
 本目录为山洪灾后搜救渲染版，新增坍塌房屋、建筑废墟、照片材质和外围山体。启动方法与具体变化见 RENDERING_NOTES.md。
 
+**无人机航测与地面规划演示**。双击 `start_uav_mapping.cmd`，无人机航测 84 × 60 米的 D 场景并选择未知区斜视补拍。小车读取地面高程和通行图，计算全局路线。输出包含 ETH aerial_mapper 方法的正射图、表面高程图、地面高程图、彩色点云和地图对照图。[运行说明](docs/UAV_MAPPING.md)
+
 新增 **D 复杂山洪场景＋空地多视角验证**：84×60 m 的实体起伏地形、沟壑、252 棵有纹理的树、140 丛枝叶灌木、两个有碰撞体的移动障碍，以及车载/无人机 RGB-D 观测与来源可追溯的位置融合。双击 `start_search_D.cmd` 启动；画面和遮挡复核见 [森林场景](docs/FOREST_SCENE.md)，配置与对照命令见 [复杂场景说明](docs/COMPLEX_DISASTER_SCENE.md)。无人机当前是运动学观测平台，研究原型尚未证明识别或导航性能提升。
 
 新增 **LiDAR＋RGB-D自主搜索研究模块**：搜索/确认/投送滚动调度、主动多视角确认、局部避障、报告与物资事件，以及独立评价与基线开关。运行入口为 `start_search_B.cmd`；受控平地流程验证入口为 `start_search_demo.cmd`。安装、算法边界和实验命令见 [SEARCH_ALGORITHMS.md](docs/SEARCH_ALGORITHMS.md)。该模块使用新增传感器，以下原版纯视觉说明仍适用于原A/B/C和`start_rover_B.cmd`。研究原型尚未证明性能提升。
