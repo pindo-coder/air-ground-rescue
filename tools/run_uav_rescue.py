@@ -362,6 +362,36 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
 
     trail = []
     written = 0
+    try:
+        hud_font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 19)
+        hud_font_sm = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 16)
+        pip_font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 16)
+    except Exception:
+        hud_font = ImageFont.load_default(size=18)
+        hud_font_sm = ImageFont.load_default(size=15)
+        pip_font = ImageFont.load_default(size=15)
+
+    state_cn_map = {
+        "TRACKING": "巡航避障跟踪",
+        "ALIGN_HEADING": "原地对准航向",
+        "FACE_VICTIM": "转向正对伤员",
+        "VERIFY_AND_DELIVER": "抵近停稳复核",
+        "DELIVERED": "完成物资投送",
+        "ARRIVED": "到达停稳",
+        "STOPPED_SAFE": "安全停车",
+    }
+
+    def draw_cn_labels(bgr_img, top_text, captions):
+        """Render crisp Chinese HUD & PiP captions onto a BGR frame via Pillow."""
+        pil = Image.fromarray(cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB))
+        dr = ImageDraw.Draw(pil)
+        use_font = hud_font if dr.textlength(top_text, font=hud_font) <= (out_w - 36) else hud_font_sm
+        dr.text((18, 14), top_text, font=use_font, fill=(238, 246, 252))
+        for cx, cy, ctext in captions:
+            tw = round(dr.textlength(ctext, font=pip_font))
+            dr.rectangle((cx - 4, cy - 3, cx + tw + 8, cy + 21), fill=(16, 24, 34))
+            dr.text((cx + 2, cy - 1), ctext, font=pip_font, fill=(240, 248, 255))
+        return cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
 
     # Phase 1 (optional): Drone flight video from drone_fpv_cam + downward aerial_rgb PiP.
     drone_chase_dir = folder / "evaluation/drone_chase_frames"
@@ -376,12 +406,12 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
             dframe = cv2.resize(dframe, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
             overlay = dframe.copy()
             cv2.rectangle(overlay, (0, 0), (out_w, 54), (16, 24, 34), -1)
-            dframe = cv2.addWeighted(overlay, 0.72, dframe, 0.28, 0.0)
+            dframe = cv2.addWeighted(overlay, 0.74, dframe, 0.26, 0.0)
             hud_uav = (
-                f"Phase 1: UAV Aerial Mapping & Victim Search  |  "
-                f"t={idx * 0.2:.1f}s ({video_speed:.0f}x)  |  Camera: drone_fpv_cam + aerial_rgb"
+                f"阶段一：无人机航测建图与纯 YOLO 空中搜寻 | "
+                f"仿真时间 {idx * 0.2:.1f} s（{video_speed:.0f}倍速）| 第三人称跟飞 + 机腹下视"
             )
-            cv2.putText(dframe, hud_uav, (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (238, 246, 252), 2, cv2.LINE_AA)
+            captions = []
             if nadir_files:
                 n_idx = min(len(nadir_files) - 1, idx // 5)
                 nimg = cv2.imread(str(nadir_files[n_idx]))
@@ -391,14 +421,15 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
                     cv2.rectangle(nimg, (0, 0), (nw - 1, nh - 1), (210, 225, 235), 2)
                     nx0, ny0 = 18, out_h - nh - 18
                     dframe[ny0:ny0 + nh, nx0:nx0 + nw] = nimg
-                    cv2.putText(dframe, "UAV Nadir RGB", (nx0 + 6, ny0 - 8),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.50, (240, 248, 255), 1, cv2.LINE_AA)
+                    captions.append((nx0 + 2, ny0 - 26, "无人机机腹下视航拍"))
+            dframe = draw_cn_labels(dframe, hud_uav, captions)
             writer.write(dframe)
             written += 1
 
     # Phase 2: Rover driving & rescue video + live Rover FPV PiP + live UAV Mini-Map PiP.
     fpv_dir = folder / "rover/fpv_frames"
     fpv_files = sorted(fpv_dir.glob("*.jpg")) if fpv_dir.is_dir() else []
+    local_tag = "神经 DAgger 局规" if (rover_status.get("local_policy") or {}).get("policy") == "neural" else "规则局规"
     for row_idx, row in enumerate(meta_rows):
         fpath = frames_dir / f"{row['frame']:05d}.jpg"
         if not fpath.is_file():
@@ -408,19 +439,17 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
             continue
         frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
 
-        # Dark semi-transparent HUD strip at top.
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (out_w, 54), (16, 24, 34), -1)
-        frame = cv2.addWeighted(overlay, 0.72, frame, 0.28, 0.0)
+        frame = cv2.addWeighted(overlay, 0.74, frame, 0.26, 0.0)
+        st_cn = state_cn_map.get(row["state"], row["state"])
         hud1 = (
-            f"Scene D Air-to-Ground Rescue  |  Planner: {eval_summary.get('planner', 'igha_vctp')}  |  "
-            f"t={row['time_s']:.1f}s ({video_speed:.0f}x)  |  v={row['speed']:.2f} m/s  |  "
-            f"Drops: {row['delivered']}/{eval_summary['cargo_capacity']}  |  "
-            f"State: {row['state']}"
+            f"阶段二：四轮车纯 YOLO + VCTP/IGHA* + {local_tag} | "
+            f"t={row['time_s']:.1f} s（{video_speed:.0f}x）| 车速 {row['speed']:.2f} m/s | "
+            f"已投送 {row['delivered']}/{eval_summary['cargo_capacity']} | {st_cn}"
         )
-        cv2.putText(frame, hud1, (16, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (238, 246, 252), 2, cv2.LINE_AA)
+        captions = []
 
-        # Live Rover Front FPV Camera PiP in bottom-left corner.
         if fpv_files:
             f_idx = min(len(fpv_files) - 1, int(round(row_idx * len(fpv_files) / max(1, len(meta_rows)))))
             fpv_img = cv2.imread(str(fpv_files[f_idx]))
@@ -430,10 +459,8 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
                 cv2.rectangle(fpv_img, (0, 0), (fw - 1, fh - 1), (210, 225, 235), 2)
                 fx0, fy0 = 18, out_h - fh - 18
                 frame[fy0:fy0 + fh, fx0:fx0 + fw] = fpv_img
-                cv2.putText(frame, "Rover Front FPV", (fx0 + 6, fy0 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (240, 248, 255), 1, cv2.LINE_AA)
+                captions.append((fx0 + 2, fy0 - 26, "四轮车车头前视相机"))
 
-        # Live UAV mini-map PiP in bottom-right corner.
         pip = base_pip.copy()
         trail.append(to_pip((row["x"], row["y"])))
         if len(trail) >= 2:
@@ -442,9 +469,9 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         cv2.circle(pip, trail[-1], 5, (15, 25, 35), 1)
         x0, y0 = out_w - pip_w - 18, out_h - pip_h - 18
         frame[y0:y0 + pip_h, x0:x0 + pip_w] = pip
-        cv2.putText(frame, "UAV Prior + Live Rover", (x0 + 6, y0 - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, (240, 248, 255), 1, cv2.LINE_AA)
+        captions.append((x0 + 2, y0 - 26, "无人机通行图 + 小车实时轨迹"))
 
+        frame = draw_cn_labels(frame, hud1, captions)
         writer.write(frame)
         written += 1
 
