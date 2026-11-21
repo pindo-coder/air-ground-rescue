@@ -10,12 +10,23 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from export_gazebo_d import terrain_collision_tiles
+from export_gazebo_d import add_gui, terrain_collision_tiles
 from gazebo_d_robots import add_drone, add_rover
 from webots_static_scene import Node, StaticScene
 
 
 class GazeboDExportTest(unittest.TestCase):
+    def test_gui_opens_both_rover_camera_topics(self):
+        world = ET.Element("world")
+        viewpoint = Node("Viewpoint", {"position": (-58, -69, 48)}, ROOT / "worlds/search_D.wbt")
+        add_gui(world, viewpoint)
+        panels = world.findall("./gui/plugin[@filename='ImageDisplay']")
+        self.assertEqual({panel.get("name"): panel.findtext("topic") for panel in panels}, {
+            "Rover RGB": "/rover/rgb",
+            "Rover Depth": "/rover/depth",
+            "Drone RGB": "/drone/rgb",
+        })
+
     def test_terrain_faces_reference_original_vertices_and_normals(self):
         with tempfile.TemporaryDirectory() as directory:
             grid = 2, 2, .125, .125, [0, .2, .4, .1]

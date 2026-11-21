@@ -12,4 +12,40 @@ if [[ -S /mnt/wslg/.X11-unix/X0 ]]; then
         export LD_PRELOAD="$d3d12_core${LD_PRELOAD:+:$LD_PRELOAD}"
     fi
 fi
-exec gz sim -r "${bundle_dir}/search_d.sdf" "$@"
+
+world="$bundle_dir/search_d.sdf"
+if [[ $# -ne 0 || ! -S /mnt/wslg/.X11-unix/X0 ]]; then
+    exec gz sim -r "$world" "$@"
+fi
+
+# A second D instance can exhaust WSLg's graphics allocations. Hold the lock
+# until both processes have exited, including after a renderer crash.
+exec 9>"$bundle_dir/.launch.lock"
+if ! flock -n 9; then
+    exit 0
+fi
+
+children=()
+cleanup() {
+    if (( ${#children[@]} == 0 )); then
+        return
+    fi
+    kill -TERM "${children[@]}" 2>/dev/null || true
+    for _ in {1..60}; do
+        if [[ -z "$(jobs -pr)" ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+    kill -KILL "${children[@]}" 2>/dev/null || true
+    wait "${children[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+gz sim -s -r "$world" &
+children+=("$!")
+gz sim -g "$world" &
+children+=("$!")
+wait -n "${children[@]}"

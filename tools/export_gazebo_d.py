@@ -80,15 +80,19 @@ def add_gui(world, viewpoint):
     pitch = math.atan2(-forward[2], math.hypot(*forward[:2]))
     yaw = math.atan2(forward[1], forward[0])
     gui = add_overview_gui(world, (*eye, 0, pitch, yaw))
-    for title, namespace in (("Rover RGB", "rover"), ("Drone RGB", "drone")):
+    for title, topic, picker in (
+        ("Rover RGB", "/rover/rgb", "false"),
+        ("Rover Depth", "/rover/depth", "false"),
+        ("Drone RGB", "/drone/rgb", "true"),
+    ):
         image = element(gui, "plugin", filename="ImageDisplay", name=title)
         layout = element(image, "gz-gui")
         element(layout, "title", title)
         element(layout, "property", "docked", key="state", type="string")
         element(layout, "property", "320", key="width", type="double")
         element(layout, "property", "240", key="height", type="double")
-        element(image, "topic", f"/{namespace}/rgb")
-        element(image, "topic_picker", "true")
+        element(image, "topic", topic)
+        element(image, "topic_picker", picker)
 
 
 def write_environment(output, config, terrain, grid):
