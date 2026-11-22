@@ -23,6 +23,15 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 
 class GazeboMissionHelpersTest(unittest.TestCase):
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY and importlib.util.find_spec("cv2"),
+                         "Gazebo mapper dependencies required")
+    def test_mapper_selects_pose_at_image_acquisition(self):
+        from uav_mapper_node import _nearest_sample
+
+        pose_history = [(9.9, "old"), (10.0, "at frame"), (10.6, "latest")]
+        self.assertEqual(_nearest_sample(pose_history, 10.02, 0.075), (10.0, "at frame"))
+        self.assertIsNone(_nearest_sample(pose_history, 10.2, 0.075))
+
     def test_bridge_script_and_mission_flight_duration(self):
         from run_gazebo_mission import compute_flight_end_s
 

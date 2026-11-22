@@ -619,6 +619,7 @@ class RoverMissionCore:
 def run_ros2_rover(args):
     import rclpy
     from geometry_msgs.msg import TransformStamped, Twist
+    from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.parameter import Parameter as RosParam
     from rclpy.qos import qos_profile_sensor_data
@@ -810,10 +811,11 @@ def run_ros2_rover(args):
     node = _RoverNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node._send_twist(0.0, 0.0)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
-        node._send_twist(0.0, 0.0)
+        if rclpy.ok():
+            node._send_twist(0.0, 0.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -6,6 +6,7 @@ Subscribes ONLY to onboard Gazebo/ROS 2 drone sensors (`/drone/rgb`, `/drone/dep
 """
 
 import argparse
+from collections import deque
 import json
 import math
 from pathlib import Path
@@ -43,6 +44,13 @@ from survey_refinement import refine_ground, schedule_oblique
 
 def _stamp_to_sec(stamp):
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def _nearest_sample(history, target_s, tolerance_s):
+    sample = min(history, key=lambda item: abs(item[0] - target_s), default=None)
+    if sample is not None and abs(sample[0] - target_s) <= tolerance_s:
+        return sample
+    return None
 
 
 def _write_json_atomic(path, payload):
@@ -297,8 +305,8 @@ def run_ros2_mapper(args):
             self._lock = threading.Lock()
             self._latest_rgb = None
             self._latest_depth = None
-            self._latest_gps = None
-            self._latest_imu = None
+            self._gps_history = deque(maxlen=32)
+            self._imu_history = deque(maxlen=32)
             self._fpv_count = 0
 
             # Each low-rate survey frame is used for a paired RGB-D observation.
@@ -324,12 +332,12 @@ def run_ros2_mapper(args):
         def _on_gps(self, msg):
             enu = self.core.navsat.convert(msg.latitude, msg.longitude, msg.altitude, apply_noise=True)
             with self._lock:
-                self._latest_gps = (_stamp_to_sec(msg.header.stamp), enu)
+                self._gps_history.append((_stamp_to_sec(msg.header.stamp), enu))
 
         def _on_imu(self, msg):
             q = (msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w)
             with self._lock:
-                self._latest_imu = (_stamp_to_sec(msg.header.stamp), q)
+                self._imu_history.append((_stamp_to_sec(msg.header.stamp), q))
 
         def _on_fpv(self, msg):
             if self.core.finished:
@@ -349,15 +357,14 @@ def run_ros2_mapper(args):
             with self._lock:
                 rgb = self._latest_rgb
                 depth = self._latest_depth
-                gps = self._latest_gps
-                imu = self._latest_imu
-            if rgb is None or depth is None or gps is None or imu is None:
+                if rgb is None or depth is None:
+                    return
+                t_ref = depth[0]
+                gps = _nearest_sample(self._gps_history, t_ref, 0.075)
+                imu = _nearest_sample(self._imu_history, t_ref, 0.075)
+            if t_ref <= 0.0 or abs(rgb[0] - t_ref) > 0.05 or gps is None or imu is None:
                 return
-            # Check loose synchronization within 0.6 s.
-            t_ref = depth[0] if depth[0] > 0 else now_s
-            if abs(rgb[0] - t_ref) > 0.6 or abs(gps[0] - t_ref) > 0.6 or abs(imu[0] - t_ref) > 0.6:
-                return
-            done = self.core.ingest_frame(now_s, rgb[1], depth[1], gps[1], imu[1])
+            done = self.core.ingest_frame(t_ref, rgb[1], depth[1], gps[1], imu[1])
             if done:
                 rclpy.shutdown()
 

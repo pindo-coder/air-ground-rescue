@@ -117,14 +117,15 @@ def add_gps(link, source, namespace, rate=10):
     element(sensor, "navsat")
 
 
-def add_contact_sensor(link, collision_names, namespace="rover", rate=10):
+def add_contact_sensor(link, collision_names, topic, *, name="chassis_contact"):
     if not collision_names:
         return
-    sensor = element(link, "sensor", name="chassis_contact", type="contact")
-    element(sensor, "topic", f"/{namespace}/contact")
+    sensor = element(link, "sensor", name=name, type="contact")
+    element(sensor, "topic", topic)
     element(sensor, "always_on", "true")
-    element(sensor, "update_rate", str(rate))
+    element(sensor, "update_rate", "10")
     contact = element(sensor, "contact")
+    element(contact, "topic", topic)
     for cname in collision_names:
         element(contact, "collision", cname)
 
@@ -182,6 +183,8 @@ def add_wheel(exporter, model, source, friction, parameters=None):
     Placement().child(body, parameters).write(link)
     write_body(exporter, body, link, parameters=parameters)
     write_friction(link, friction)
+    add_contact_sensor(link, [part.attrib["name"] for part in link.findall("collision")],
+                       "/rover/wheel_contact", name="wheel_contact")
     mass = body.fields["physics"].fields["mass"]
     cylinder = body.fields["boundingObject"].fields
     radius, length = cylinder["radius"], cylinder["height"]
@@ -224,7 +227,7 @@ def add_rover(world, source, exporter, friction):
                                mass * (x*x + y*y) / 12), center)
 
     chassis_collisions = [c.attrib["name"] for c in chassis.findall("collision")]
-    add_contact_sensor(chassis, chassis_collisions, namespace="rover", rate=10)
+    add_contact_sensor(chassis, chassis_collisions, "/rover/contact")
 
     wheels = {}
     left_joints = []

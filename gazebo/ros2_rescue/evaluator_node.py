@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent privileged ground-truth evaluator & world-spawner for Gazebo Harmonic + ROS 2 Jazzy.
 
-Subscribes ONLY to `/eval/world_poses` (`/model/rover/pose`) and `/eval/rover_contact`.
+Subscribes to independent rover poses and chassis / wheel contacts under `/eval/`.
 Strictly isolated from `uav_mapper_node.py` and `rover_nav_node.py` (zero truth leakage).
 """
 
@@ -345,15 +345,20 @@ def run_ros2_evaluator(args):
 
             self._lock = threading.Lock()
             self._latest_rover = None
-            self._in_contact = False
+            self._last_obstacle_contact_s = -math.inf
+            self._last_chassis_contact_s = -math.inf
             self.collisions = 0
             self.chassis_contacts = 0
+            self.collision_events = []
             self.trajectory = []
             self._last_sample_s = -1.0
 
             self.create_subscription(TFMessage, "/eval/world_poses", self._on_poses, qos_profile_sensor_data)
             if Contacts is not None:
-                self.create_subscription(Contacts, "/eval/rover_contact", self._on_contact, qos_profile_sensor_data)
+                self.create_subscription(Contacts, "/eval/rover_contact",
+                                         lambda msg: self._on_contact(msg, chassis=True), qos_profile_sensor_data)
+                self.create_subscription(Contacts, "/eval/rover_wheel_contacts",
+                                         self._on_contact, qos_profile_sensor_data)
             self.create_timer(0.1, self._tick)
 
         def _on_poses(self, msg):
@@ -369,19 +374,24 @@ def run_ros2_evaluator(args):
                         )
                     break
 
-        def _on_contact(self, msg):
-            has_obstacle_hit = False
-            for c in getattr(msg, "contacts", []):
-                c1 = getattr(c.collision1, "name", "")
-                c2 = getattr(c.collision2, "name", "")
-                if _is_obstacle_contact(c1, c2):
-                    has_obstacle_hit = True
-                    break
+        def _on_contact(self, msg, chassis=False):
+            hit = next((c for c in msg.contacts if _is_obstacle_contact(c.collision1.name, c.collision2.name)), None)
+            if hit is None:
+                return
+            timestamp = msg.header.stamp
+            now_s = timestamp.sec + timestamp.nanosec * 1e-9
             with self._lock:
-                if has_obstacle_hit and not self._in_contact:
+                if now_s - self._last_obstacle_contact_s > 0.2:
                     self.collisions += 1
-                    self.chassis_contacts += 1
-                self._in_contact = has_obstacle_hit
+                    self.collision_events.append(dict(
+                        time_s=round(now_s, 3), source="chassis" if chassis else "wheel",
+                        entities=[hit.collision1.name, hit.collision2.name],
+                    ))
+                self._last_obstacle_contact_s = max(now_s, self._last_obstacle_contact_s)
+                if chassis:
+                    if now_s - self._last_chassis_contact_s > 0.2:
+                        self.chassis_contacts += 1
+                    self._last_chassis_contact_s = max(now_s, self._last_chassis_contact_s)
 
         def _tick(self):
             now_s = self.get_clock().now().nanoseconds * 1e-9
@@ -435,6 +445,8 @@ def run_ros2_evaluator(args):
                     spawned_obstacles=self.spawned_obstacles,
                     target_deliveries=args.target_deliveries,
                 )
+                collision_log = self.folder / "evaluation" / "collision_events.json"
+                collision_log.write_text(json.dumps(self.collision_events, indent=2), encoding="utf-8")
                 print(
                     f"[ROS2 Eval] Finished: status={summary['status']} "
                     f"collisions={summary['collisions']} path={summary['path_length_m']}m",

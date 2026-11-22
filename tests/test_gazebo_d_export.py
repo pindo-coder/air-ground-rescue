@@ -73,6 +73,7 @@ class GazeboDExportTest(unittest.TestCase):
         rover_chassis = world.find("./model[@name='rover']/link[@name='chassis']")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chase_cam']/topic"), "/rover/chase_cam")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chassis_contact']/topic"), "/rover/contact")
+        self.assertEqual(rover_chassis.findtext("./sensor[@name='chassis_contact']/contact/topic"), "/rover/contact")
         for model in ("rover", "drone"):
             publisher = world.find(f"./model[@name='{model}']/plugin[@name='gz::sim::systems::PosePublisher']")
             self.assertIsNotNone(publisher)
@@ -87,6 +88,9 @@ class GazeboDExportTest(unittest.TestCase):
 
         # Exact 4-wheel VCTP skid-steer geometry
         rover_model = world.find("./model[@name='rover']")
+        wheel_contacts = rover_model.findall("./link/sensor[@name='wheel_contact']")
+        self.assertEqual(len(wheel_contacts), 4)
+        self.assertTrue(all(sensor.findtext("contact/topic") == "/rover/wheel_contact" for sensor in wheel_contacts))
         joints = {j.attrib["name"]: list(map(float, j.findtext("pose").split()[:3]))
                   for j in rover_model.findall("joint")}
         self.assertEqual(joints, {
@@ -110,7 +114,7 @@ class GazeboDExportTest(unittest.TestCase):
             "/rover/imu", "/rover/gps", "/rover/lidar", "/rover/lidar/points",
             "/rover/rgb", "/rover/depth", "/rover/chase_cam",
             "/drone/rgb", "/drone/depth", "/drone/fpv_cam", "/drone/gps", "/drone/imu",
-            "/eval/world_poses", "/eval/drone_pose", "/eval/rover_contact",
+            "/eval/world_poses", "/eval/drone_pose", "/eval/rover_contact", "/eval/rover_wheel_contacts",
             "/model/rover/pose", "/model/drone/pose",
         ):
             self.assertIn(f'"{topic}"', text)

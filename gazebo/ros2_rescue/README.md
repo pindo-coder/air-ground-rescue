@@ -11,7 +11,7 @@
 | `sensor_adapters.py` | 纯 Python 传感器与坐标转换层（WGS84 `NavSatToEnu` + 0.04 m 相关噪声、`RGB_INT8`/`32FC1`/`16UC1` 解码、`PointCloud2` 解析、ENU 四元数↔RPY、4 轮编码器均值、静态 TF 表） |
 | `uav_mapper_node.py` | ROS 2 航测建图节点：订阅 `/drone/{rgb,depth,gps,imu,fpv_cam}`，调用 `survey_map`（0.5 m + 0.125 m 细地面）、DUCPP `schedule_oblique`（输出 `oblique_survey.json` 触发 6-DoF 斜拍）与 YOLO11n v2 `AerialVictimTracker` |
 | `rover_nav_node.py` | ROS 2 无人车节点：发布静态 TF 树，调用 Traversing Mars `plan_dual`、VCTP + IGHA\*、`RouteNavigationController`（规则或 `LocalPolicyExperiment` BC/DAgger 神经网络）、车端 YOLO 近距复核与物资投送事件，以 10 Hz 发布 `/rover/cmd_vel` |
-| `evaluator_node.py` | 独立真值评测与场景注入节点：仅订阅 `/eval/world_poses` 与 `/eval/rover_contact`，通过 `gz service` 动态生成 `detour`/`block` 障碍与橙色物资箱，调用 `evaluation/search_metrics.py` 输出 Webots 同格式 `evaluation/summary.json` 与 `trajectory.csv` |
+| `evaluator_node.py` | 独立真值评测与场景注入节点，订阅 `/eval/world_poses`、`/eval/rover_contact` 与 `/eval/rover_wheel_contacts`。通过 `gz service` 生成障碍与物资箱，并输出 `evaluation/summary.json` 和 `trajectory.csv` |
 
 ## 坐标系与关键适配点
 
