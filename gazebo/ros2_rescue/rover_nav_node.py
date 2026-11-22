@@ -51,8 +51,15 @@ from vctp import FineTerrainSurface, VctpChecker
 
 
 def _write_json_atomic(path, payload):
+    def serialize(value):
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=serialize), encoding="utf-8")
     tmp.replace(path)
 
 

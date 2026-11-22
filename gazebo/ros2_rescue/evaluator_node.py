@@ -227,10 +227,14 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
         rmse = math.sqrt(sum(d * d for d in distances) / len(distances)) if distances else None
         report_for_victim = {report["victim_id"]: i for i, report in enumerate(reports)}
         delivered_ids = set()
+        delivery_checks = []
         time_samples = np.array([row["time_s"] for row in rows], dtype=float)
         stationary_s = _stationary_durations(rows)
         for d in deliveries:
             target_index = matched.get(report_for_victim.get(d["victim_id"]))
+            check = dict(victim_id=d["victim_id"], time_s=d["time_s"], distance_m=None,
+                         stationary_s=None, valid=False)
+            delivery_checks.append(check)
             if target_index is None or target_index in delivered_ids or not rows:
                 continue
             delivery_time = float(d["time_s"])
@@ -240,7 +244,10 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             row = rows[sample_index]
             distance = math.dist((row["x"], row["y"]), targets[target_index]["xy"])
             cargo = int(target_deliveries) - len(delivered_ids)
-            if physical_delivery_ok(True, round(float(stationary_s[sample_index]), 3), distance, cargo, delivery_tol):
+            stopped_time = round(float(stationary_s[sample_index]), 3)
+            valid = physical_delivery_ok(True, stopped_time, distance, cargo, delivery_tol)
+            check.update(distance_m=round(distance, 4), stationary_s=stopped_time, valid=valid)
+            if valid:
                 delivered_ids.add(target_index)
 
         valid_deliveries = len(delivered_ids)
@@ -250,16 +257,24 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             and collisions == 0
             and chassis_contacts == 0
         )
+        rover_status_code = rover_status.get("status", "INCOMPLETE")
+        status = rover_status_code
+        if mission_success:
+            status = "MISSION_SUCCESS"
+        elif rover_status_code == "MISSION_SUCCESS":
+            status = "MISSION_PARTIAL" if valid_deliveries else "INCOMPLETE"
         summary = dict(
             simulator="gazebo_harmonic_ros2",
             mode="rescue",
-            status="MISSION_SUCCESS" if mission_success else rover_status.get("status", "INCOMPLETE"),
+            status=status,
+            rover_status=rover_status_code,
             mission_success=mission_success,
             target_deliveries=int(target_deliveries),
             total_reports=len(reports),
             effective_reports=len(matched),
             valid_cross_view_reports=cross_view_valid,
             delivered_people=valid_deliveries,
+            delivery_checks=delivery_checks,
             localization_rmse_m=round(float(rmse), 4) if rmse is not None and math.isfinite(rmse) else None,
             collisions=int(collisions),
             chassis_contacts=int(chassis_contacts),
@@ -316,6 +331,7 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
 
 def run_ros2_evaluator(args):
     import rclpy
+    from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.parameter import Parameter as RosParam
     from rclpy.qos import qos_profile_sensor_data
@@ -457,7 +473,7 @@ def run_ros2_evaluator(args):
     node = _EvaluatorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

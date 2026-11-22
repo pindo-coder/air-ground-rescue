@@ -23,6 +23,29 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 
 class GazeboMissionHelpersTest(unittest.TestCase):
+    def test_gazebo_training_episode_summary_uses_rollout_root_and_public_metadata(self):
+        from train_gazebo_local_policy import _write_episode_summary
+
+        with TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            imitation = run / "rover/imitation"
+            imitation.mkdir(parents=True)
+            (run / "uav_map.npz").write_bytes(b"abc")
+            (run / "rover/nav_status.json").write_text('{"goal_id":"valley"}', encoding="utf-8")
+            (imitation / "manifest.json").write_text(
+                '{"samples":18,"decisions":{"learner_nonzero_applied":5}}', encoding="utf-8",
+            )
+            self.assertEqual(_write_episode_summary(run, "valley", "none", "world", "checkpoint"), 5)
+            summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["run_id"])
+            self.assertEqual(summary["condition"], dict(
+                goal_id="valley", world_sha256="world", obstacle_scenario="none",
+                map_sha256="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ))
+            self.assertEqual(summary["local_policy"]["checkpoint_sha256"], "checkpoint")
+            with self.assertRaisesRegex(ValueError, "selected 'valley' instead of 'north'"):
+                _write_episode_summary(run, "north", "none", "world", "checkpoint")
+
     @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY and importlib.util.find_spec("cv2"),
                          "Gazebo mapper dependencies required")
     def test_mapper_selects_pose_at_image_acquisition(self):
@@ -31,6 +54,19 @@ class GazeboMissionHelpersTest(unittest.TestCase):
         pose_history = [(9.9, "old"), (10.0, "at frame"), (10.6, "latest")]
         self.assertEqual(_nearest_sample(pose_history, 10.02, 0.075), (10.0, "at frame"))
         self.assertIsNone(_nearest_sample(pose_history, 10.2, 0.075))
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY and importlib.util.find_spec("cv2"),
+                         "Gazebo rover dependencies required")
+    def test_rescue_route_serializes_numpy_corridor_cells(self):
+        import numpy as np
+        from rover_nav_node import _write_json_atomic
+
+        cells = [(np.int64(22), np.int64(7))]
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "route.json"
+            _write_json_atomic(path, {"all_plans": [{"dual_route": {"corridor_unknown_cells": cells}}]})
+            self.assertEqual(json.loads(path.read_text())["all_plans"][0]["dual_route"]["corridor_unknown_cells"],
+                             [[22, 7]])
 
     def test_bridge_script_and_mission_flight_duration(self):
         from run_gazebo_mission import compute_flight_end_s
@@ -92,7 +128,7 @@ class GazeboMissionHelpersTest(unittest.TestCase):
                         type="delivery", victim_id=1, rover_xy_m=[1.0, 2.0],
                         time_s=3.0, settled_s=claimed_s,
                     )
-                    status = {"events": [report, delivery]}
+                    status = {"status": "MISSION_SUCCESS", "events": [report, delivery]}
                     (run / "rover/rescue_status.json").write_text(json.dumps(status), encoding="utf-8")
                     rows = [
                         dict(time_s=round(3.0 - 0.1 * (len(xs) - i - 1), 3), x=x, y=2.0, yaw_rad=yaw)
@@ -103,6 +139,13 @@ class GazeboMissionHelpersTest(unittest.TestCase):
                     )
                     self.assertEqual(summary["valid_cross_view_reports"], 1)
                     self.assertEqual(summary["mission_success"], success)
+                    self.assertEqual(summary["status"], "MISSION_SUCCESS" if success else "INCOMPLETE")
+                    self.assertEqual(summary["rover_status"], "MISSION_SUCCESS")
+                    check, = summary["delivery_checks"]
+                    self.assertEqual(check["valid"], success)
+                    self.assertAlmostEqual(check["distance_m"], abs(xs[-1] - 1.0), places=4)
+                    if success:
+                        self.assertEqual(check["stationary_s"], 2.0)
 
     @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY, "numpy and scipy required for evaluator")
     def test_evaluator_ignores_parking_platform_and_terrain_contacts(self):
