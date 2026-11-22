@@ -452,6 +452,13 @@ def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_ob
                     if target_idx is not None and targets[target_idx]["id"] in already:
                         valid = False
                     physical_cargo = max(0, physical_cargo - 1)
+                    dropped_idx = initial_cargo - physical_cargo
+                    try:
+                        crate_field = rover.getField(f"cargo{dropped_idx}Scale")
+                        if crate_field is not None:
+                            crate_field.setSFVec3f([0.001, 0.001, 0.001])
+                    except Exception:
+                        pass
                     rep_ts = reports[rep_idx]["timestamp_s"] if rep_idx is not None else None
                     deliveries.append(dict(
                         event,

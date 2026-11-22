@@ -9,6 +9,8 @@ PROTO ResearchRover [
   field SFString name "Rescue Rover"
   field SFString controller "search_agent"
   field SFString customData ""
+  field SFVec3f cargo1Scale 1 1 1
+  field SFVec3f cargo2Scale 1 1 1
 ] {
   Robot {
     translation IS translation
@@ -19,6 +21,97 @@ PROTO ResearchRover [
     window "<none>"
     children [
       RescueRoverBody { }
+      # Modular twin-bay servo supply release rack on rear deck (strictly z <= 0.344 m, zero LiDAR/RGB-D occlusion)
+      Pose {
+        translation -0.112 0 0.307
+        children [
+          # Base rail plate + center divider + rear release servo bar
+          Pose {
+            translation 0 0 0.003
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.14 0.16 0.19 roughness 0.45 metalness 0.72 }
+                geometry Box { size 0.142 0.184 0.006 }
+              }
+            ]
+          }
+          Pose {
+            translation 0 0 0.015
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.20 0.23 0.27 roughness 0.40 metalness 0.75 }
+                geometry Box { size 0.136 0.008 0.020 }
+              }
+            ]
+          }
+          Pose {
+            translation 0 0.090 0.014
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.20 0.23 0.27 roughness 0.40 metalness 0.75 }
+                geometry Box { size 0.136 0.006 0.018 }
+              }
+            ]
+          }
+          Pose {
+            translation 0 -0.090 0.014
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.20 0.23 0.27 roughness 0.40 metalness 0.75 }
+                geometry Box { size 0.136 0.006 0.018 }
+              }
+            ]
+          }
+          # Supply Crate 1 (left bay) - scaled down upon physical delivery #1
+          Transform {
+            translation 0 0.046 0.020
+            scale IS cargo1Scale
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.96 0.44 0.06 roughness 0.38 metalness 0.08 }
+                geometry Box { size 0.122 0.076 0.032 }
+              }
+              Pose {
+                translation 0 0 0.0165
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor 0.96 0.97 0.99 roughness 0.30 metalness 0.0 }
+                    geometry Box { size 0.044 0.012 0.002 }
+                  }
+                  Shape {
+                    appearance PBRAppearance { baseColor 0.96 0.97 0.99 roughness 0.30 metalness 0.0 }
+                    geometry Box { size 0.012 0.044 0.002 }
+                  }
+                ]
+              }
+            ]
+          }
+          # Supply Crate 2 (right bay) - scaled down upon physical delivery #2
+          Transform {
+            translation 0 -0.046 0.020
+            scale IS cargo2Scale
+            children [
+              Shape {
+                appearance PBRAppearance { baseColor 0.96 0.44 0.06 roughness 0.38 metalness 0.08 }
+                geometry Box { size 0.122 0.076 0.032 }
+              }
+              Pose {
+                translation 0 0 0.0165
+                children [
+                  Shape {
+                    appearance PBRAppearance { baseColor 0.96 0.97 0.99 roughness 0.30 metalness 0.0 }
+                    geometry Box { size 0.044 0.012 0.002 }
+                  }
+                  Shape {
+                    appearance PBRAppearance { baseColor 0.96 0.97 0.99 roughness 0.30 metalness 0.0 }
+                    geometry Box { size 0.012 0.044 0.002 }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
       Camera {
         translation 0.26 0 0.30
         rotation 0 1 0 0.08
