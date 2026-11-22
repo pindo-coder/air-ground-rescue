@@ -104,9 +104,10 @@ class RescueDEnvironment:
             return
         map_ready = (self.run_dir / "uav_map.npz").is_file()
         deploy_xy = self.survey_mission.get("deployment_xy_enu_m")
-        if not map_ready and os.environ.get("GZ_PARK_ROVER_DURING_SURVEY", "1") == "1":
+        parking_xyz = self.config.get("rover_parking_xyz")
+        if not map_ready and parking_xyz and os.environ.get("GZ_PARK_ROVER_DURING_SURVEY", "1") == "1":
             if not self.rover_parked:
-                Model(rover).set_world_pose_cmd(ecm, Pose3d(-60.0, -45.0, 2.0, 0.0, 0.0, 0.0))
+                Model(rover).set_world_pose_cmd(ecm, Pose3d(*parking_xyz, 0.0, 0.0, 0.0))
                 self.rover_parked = True
         elif map_ready and not self.rover_deployed and deploy_xy is not None:
             dx, dy = float(deploy_xy[0]), float(deploy_xy[1])

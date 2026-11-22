@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "worlds" / "search_D.wbt"
 DEFAULT_OUTPUT = ROOT / "gazebo" / "generated" / "D"
 TILE_CELLS = 48
+ROVER_PARKING_XYZ = (-60.0, -45.0, 2.0)
 
 
 def terrain_collision_tiles(output, grid):
@@ -61,6 +62,17 @@ def add_terrain(world, source, exporter, grid):
         uri = path.relative_to(exporter.output).as_posix()
         element(element(element(collision, "geometry"), "mesh"), "uri", uri)
     write_terrain_obj(exporter.output / "terrain.obj", grid)
+
+
+def add_rover_parking_platform(world):
+    platform = element(world, "model", name="rover_parking_platform")
+    element(platform, "static", "true")
+    x, y, z = ROVER_PARKING_XYZ
+    element(platform, "pose", number_list((x, y, z - 0.11, 0, 0, 0)))
+    link = element(platform, "link", name="support")
+    collision = element(link, "collision", name="support")
+    box = element(element(collision, "geometry"), "box")
+    element(box, "size", "2 2 0.2")
 
 
 def add_lights(world, nodes):
@@ -114,6 +126,7 @@ def write_environment(output, config, terrain, grid):
         "origin": terrain.fields["translation"][:2],
         "spacing": [dx, dy],
         "heights": [flat[j * nx:(j + 1) * nx] for j in range(ny)],
+        "rover_parking_xyz": ROVER_PARKING_XYZ,
         "spherical_origin": {
             "surface_model": "EARTH_WGS84",
             "world_frame_orientation": "ENU",
@@ -177,6 +190,7 @@ def export(output):
     output.mkdir(parents=True, exist_ok=True)
     exporter = StaticScene(ROOT, output)
     add_terrain(world, terrain, exporter, grid)
+    add_rover_parking_platform(world)
     for node in nodes:
         if node is not terrain and node.kind in {"Solid", "Shape"}:
             exporter.static_model(world, node)

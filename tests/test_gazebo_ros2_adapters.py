@@ -1,11 +1,14 @@
 """Unit tests for Gazebo Harmonic + ROS 2 Jazzy sensor adapters, evaluator helpers, and mission prep."""
 
 import importlib.util
+import json
 import math
 from pathlib import Path
 import struct
 import sys
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,10 +40,71 @@ class GazeboMissionHelpersTest(unittest.TestCase):
             self.skipTest("numpy not installed in host Python")
         from evaluator_node import build_box_sdf
 
-        xml_str = build_box_sdf("supply_crate_01", (0.24, 0.18, 0.18), (1.0, 2.0, 0.5), 0.7, (0.94, 0.36, 0.06))
+        xml_str = build_box_sdf("injected_obstacle_01", (0.24, 0.18, 0.18), (1.0, 2.0, 0.5), 0.7, (0.94, 0.36, 0.06))
         root = ET.fromstring(xml_str)
         self.assertEqual(root.tag, "sdf")
-        self.assertEqual(root.find("./model").attrib["name"], "supply_crate_01")
+        self.assertEqual(root.find("./model").attrib["name"], "injected_obstacle_01")
+        self.assertIsNotNone(root.find("./model/link/collision/geometry/box"))
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY, "numpy and scipy required for evaluator")
+    def test_supply_crate_spawns_with_visual_only(self):
+        import xml.etree.ElementTree as ET
+        from evaluator_node import spawn_supply_crate
+
+        terrain = dict(origin=[0.0, 0.0], spacing=1.0, heights=[[0.0, 0.0], [0.0, 0.0]])
+        delivery = dict(rover_xy_m=[0.25, 0.25], rover_yaw_rad=0.0)
+        with patch("evaluator_node._gz_service") as service:
+            spawn_supply_crate("search_d", terrain, delivery, 1)
+        request = service.call_args.args[3]
+        model = ET.fromstring(json.loads(request.removeprefix("sdf: "))).find("model")
+        self.assertEqual(model.attrib["name"], "supply_crate_01")
+        self.assertIsNotNone(model.find("link/visual/geometry/box"))
+        self.assertIsNone(model.find("link/collision"))
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY, "numpy and scipy required for evaluator")
+    def test_rescue_evaluator_checks_independent_delivery_position_and_still_time(self):
+        from evaluator_node import evaluate_run_offline
+
+        terrain = {"victims": [{"id": 1, "xy": [1.0, 2.0]}]}
+        report = dict(type="report", victim_id=1, xy_enu_m=[1.0, 2.0], time_s=2.0, cross_view=True)
+        cases = (
+            ("stationary despite zero claimed time", [1.0] * 21, [0.0] * 21, 0.0, True),
+            ("stationary out of reach", [6.0] * 21, [0.0] * 21, 2.2, False),
+            ("moving despite claimed stop", [0.8 + 0.01 * i for i in range(21)], [0.0] * 21, 2.2, False),
+            ("turning in place", [1.0] * 21, [0.02 * i for i in range(21)], 2.2, False),
+            ("single sample", [1.0], [0.0], 2.2, False),
+        )
+        with TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            (run / "rover").mkdir()
+            for label, xs, yaws, claimed_s, success in cases:
+                with self.subTest(label=label):
+                    delivery = dict(
+                        type="delivery", victim_id=1, rover_xy_m=[1.0, 2.0],
+                        time_s=3.0, settled_s=claimed_s,
+                    )
+                    status = {"events": [report, delivery]}
+                    (run / "rover/rescue_status.json").write_text(json.dumps(status), encoding="utf-8")
+                    rows = [
+                        dict(time_s=round(3.0 - 0.1 * (len(xs) - i - 1), 3), x=x, y=2.0, yaw_rad=yaw)
+                        for i, (x, yaw) in enumerate(zip(xs, yaws))
+                    ]
+                    summary = evaluate_run_offline(
+                        run, terrain, mode="rescue", trajectory_rows=rows, target_deliveries=1,
+                    )
+                    self.assertEqual(summary["valid_cross_view_reports"], 1)
+                    self.assertEqual(summary["mission_success"], success)
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY, "numpy and scipy required for evaluator")
+    def test_evaluator_ignores_parking_platform_and_terrain_contacts(self):
+        from evaluator_node import _is_obstacle_contact
+
+        rover = "rover::chassis::collision"
+        for ignored in ("terrain::body::tile_0_0", "rover_parking_platform::support::support"):
+            with self.subTest(collision=ignored):
+                self.assertFalse(_is_obstacle_contact(rover, ignored))
+                self.assertFalse(_is_obstacle_contact(ignored, rover))
+        self.assertTrue(_is_obstacle_contact(rover, "boulder::body::collision"))
 
 
 @unittest.skipUnless(HAS_NUMPY, "numpy required for sensor adapter tests")

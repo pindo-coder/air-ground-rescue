@@ -170,8 +170,11 @@ class RoverMissionCore:
         )
 
         self.settings = json.loads((self.folder / "map_config.json").read_text(encoding="utf-8"))
-        self.grid, self.states, self.layers = load_prior(self.folder / "uav_map.npz")
-        self.fine_surface = FineTerrainSurface.from_uav_map(self.folder / "uav_map.npz")
+        map_file = self.folder / "uav_map.npz"
+        self.grid, self.states = load_prior(map_file)
+        with np.load(map_file, allow_pickle=False) as data:
+            self.layers = {name: data[name] for name in ("ground_z_m", "slope_deg", "planning_cost")}
+        self.fine_surface = FineTerrainSurface.from_uav_map(map_file)
         self.vctp = VctpChecker(self.fine_surface)
         self.terrain_aware = "max_slope_deg" in self.settings
         self.planning_cost = self.layers.get("planning_cost") if self.terrain_aware else None
@@ -245,7 +248,9 @@ class RoverMissionCore:
             self._init_navigation(start_xyz, start_yaw)
 
     def _init_navigation(self, start_xyz, start_yaw):
-        goals = self.settings["route_goals"]
+        goals = self.settings.get("route_goals")
+        if goals is None:
+            goals = [{"id": "local", "xy_enu_m": self.settings["waypoint_xy_enu_m"]}]
         routes = []
         for g in goals:
             r = plan_goal_route(
@@ -328,6 +333,8 @@ class RoverMissionCore:
             initial_route_xy=chosen["route_xy_m"],
             goal_xy=chosen["approach_xy_m"],
             local_planner=self.experiment,
+            settle_time_s=0.4,
+            goal_tolerance_m=0.28,
         )
         _write_json_atomic(
             self.folder / "route.json",
@@ -551,23 +558,15 @@ class RoverMissionCore:
         if self.telemetry_file is not None:
             self.telemetry_file.close()
             self.telemetry_file = None
-        if self.experiment is not None and self.experiment.recorder is not None:
-            meta = dict(
-                simulator="gazebo_harmonic_ros2",
-                mode=self.mode,
-                planner=self.planner_mode,
-                policy=self.local_policy,
-                checkpoint=self.local_checkpoint,
-                expert_mix=self.local_expert_mix,
-                seed=self.local_seed,
-            )
-            self.experiment.recorder.close(meta, status_str)
+        if self.experiment is not None:
+            return self.experiment.close(status_str)
+        return None
 
     def _finish_navigation(self, status, reason, now_s):
         if self.finished:
             return
         self.finished = True
-        self._close_common(status)
+        policy_stats = self._close_common(status)
         report = self.controller.report if self.controller is not None else None
         payload = dict(
             goal_id=self.selected_route["id"],
@@ -582,8 +581,8 @@ class RoverMissionCore:
             replan_count=report.replan_count if report else 0,
             events=report.events if report else [],
         )
-        if self.experiment is not None:
-            payload["local_policy_stats"] = self.experiment.summary()
+        if policy_stats is not None:
+            payload["local_policy_stats"] = policy_stats
         _write_json_atomic(self.rover_dir / "nav_status.json", payload)
         _write_json_atomic(self.rover_dir / "events.json", payload["events"])
         print(f"[ROS2 Rover] Navigation finished: status={status} reason={reason}", flush=True)
@@ -592,7 +591,7 @@ class RoverMissionCore:
         if self.finished:
             return
         self.finished = True
-        self._close_common(status)
+        policy_stats = self._close_common(status)
         payload = dict(
             mode="rescue",
             planner=self.planner_mode,
@@ -606,8 +605,8 @@ class RoverMissionCore:
             legs=self.completed_legs,
             events=self.rescue_events,
         )
-        if self.experiment is not None:
-            payload["local_policy_stats"] = self.experiment.summary()
+        if policy_stats is not None:
+            payload["local_policy_stats"] = policy_stats
         _write_json_atomic(self.rover_dir / "rescue_status.json", payload)
         _write_json_atomic(self.rover_dir / "nav_status.json", payload)
         _write_json_atomic(self.rover_dir / "events.json", self.rescue_events)
@@ -784,6 +783,8 @@ def run_ros2_rover(args):
                 depth = self._latest_depth
 
             if gps is None or rpy is None or wheels is None:
+                return
+            if self.core.experiment is not None and (bgr is None or depth is None):
                 return
             if not self.core.initialized:
                 if len(gps_init) < 3:

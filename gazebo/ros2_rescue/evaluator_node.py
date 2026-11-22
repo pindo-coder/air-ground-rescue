@@ -43,26 +43,28 @@ def _gz_service(service_name, reqtype, reptype, payload, timeout_ms=5000):
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def build_box_sdf(name, size_xyz, xyz, yaw_rad=0.0, color_rgb=(0.46, 0.34, 0.24), static=True):
+def build_box_sdf(name, size_xyz, xyz, yaw_rad=0.0, color_rgb=(0.46, 0.34, 0.24), static=True, *, collidable=True):
     sx, sy, sz = map(float, size_xyz)
     x, y, z = map(float, xyz)
     r, g, b = map(float, color_rgb)
     static_str = "true" if static else "false"
+    geometry = f'<geometry><box><size>{sx:.4f} {sy:.4f} {sz:.4f}</size></box></geometry>'
+    collision = f'<collision name="c">{geometry}</collision>' if collidable else ""
     return (
         f'<sdf version="1.10">'
         f'<model name="{name}"><static>{static_str}</static>'
         f'<pose>{x:.4f} {y:.4f} {z:.4f} 0 0 {yaw_rad:.4f}</pose>'
         f'<link name="body">'
-        f'<visual name="v"><geometry><box><size>{sx:.4f} {sy:.4f} {sz:.4f}</size></box></geometry>'
+        f'<visual name="v">{geometry}'
         f'<material><diffuse>{r:.3f} {g:.3f} {b:.3f} 1</diffuse></material></visual>'
-        f'<collision name="c"><geometry><box><size>{sx:.4f} {sy:.4f} {sz:.4f}</size></box></geometry></collision>'
+        f"{collision}"
         f'</link></model></sdf>'
     )
 
 
 def spawn_gazebo_box(world_name, name, size_xyz, xyz, yaw_rad=0.0,
-                     color_rgb=(0.46, 0.34, 0.24), static=True):
-    sdf_xml = build_box_sdf(name, size_xyz, xyz, yaw_rad, color_rgb, static=static)
+                     color_rgb=(0.46, 0.34, 0.24), static=True, *, collidable=True):
+    sdf_xml = build_box_sdf(name, size_xyz, xyz, yaw_rad, color_rgb, static=static, collidable=collidable)
     escaped = sdf_xml.replace("\\", "\\\\").replace('"', '\\"')
     payload = f'sdf: "{escaped}"'
     return _gz_service(
@@ -123,8 +125,30 @@ def spawn_supply_crate(world_name, terrain, delivery_event, index):
     name = f"supply_crate_{index:02d}"
     return spawn_gazebo_box(
         world_name, name, (0.24, 0.18, 0.18), (cx, cy, cz), yaw,
-        color_rgb=(0.94, 0.36, 0.06), static=True,
+        color_rgb=(0.94, 0.36, 0.06), static=True, collidable=False,
     )
+
+
+def _stationary_durations(rows):
+    """Accumulate consecutive still time using only samples from the evaluator."""
+    durations = np.zeros(len(rows), dtype=float)
+    for i, (previous, current) in enumerate(zip(rows, rows[1:]), start=1):
+        dt = float(current["time_s"]) - float(previous["time_s"])
+        if not 0.0 < dt <= 0.25:
+            continue
+        horizontal = math.hypot(current["x"] - previous["x"], current["y"] - previous["y"])
+        yaw_change = math.remainder(current["yaw_rad"] - previous["yaw_rad"], math.tau)
+        if horizontal / dt < 0.03 and abs(yaw_change) / dt < 0.08:
+            durations[i] = durations[i - 1] + dt
+    return durations
+
+
+def _is_obstacle_contact(first, second):
+    """Filter the landscape and the survey staging platform from collision counts."""
+    if any("rover_parking_platform" in name.split("::") for name in (first, second)):
+        return False
+    other = second if "rover" in first else first
+    return bool(other and "terrain" not in other)
 
 
 def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_path=None,
@@ -190,26 +214,37 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
         formatted_reports = [
             dict(
                 xy=r["xy_enu_m"],
-                time_s=r["time_s"],
+                timestamp_s=r["time_s"],
                 cross_view=bool(r.get("cross_view", False)),
             )
             for r in reports
         ]
-        matched, rmse = match_reports(truth_people, formatted_reports, radius_m=1.0)
+        targets = [{"xy": person.get("xy", person.get("xy_enu_m"))} for person in truth_people]
+        report_tol = float(truth_doc.get("report_tolerance_m", terrain.get("report_tolerance_m", 1.0)))
+        delivery_tol = float(truth_doc.get("delivery_tolerance_m", terrain.get("delivery_tolerance_m", 1.8)))
+        matched = match_reports(formatted_reports, targets, (0.0, 0.0), 0.0, report_tol)
+        distances = [math.dist(formatted_reports[i]["xy"], targets[j]["xy"]) for i, j in matched.items()]
+        rmse = math.sqrt(sum(d * d for d in distances) / len(distances)) if distances else None
+        report_for_victim = {report["victim_id"]: i for i, report in enumerate(reports)}
         delivered_ids = set()
-        valid_deliveries = 0
+        time_samples = np.array([row["time_s"] for row in rows], dtype=float)
+        stationary_s = _stationary_durations(rows)
         for d in deliveries:
-            rxy = np.asarray(d["rover_xy_m"], dtype=float)
-            settled = float(d.get("settled_s", 0.0))
-            for idx_p, person in enumerate(truth_people):
-                pxy = np.asarray(person.get("xy", person.get("xy_enu_m")), dtype=float)
-                dist = float(np.linalg.norm(rxy - pxy))
-                if physical_delivery_ok(dist, settled) and idx_p not in delivered_ids:
-                    delivered_ids.add(idx_p)
-                    valid_deliveries += 1
-                    break
+            target_index = matched.get(report_for_victim.get(d["victim_id"]))
+            if target_index is None or target_index in delivered_ids or not rows:
+                continue
+            delivery_time = float(d["time_s"])
+            sample_index = int(np.searchsorted(time_samples, delivery_time, side="right")) - 1
+            if sample_index < 0 or delivery_time - time_samples[sample_index] > 0.25:
+                continue
+            row = rows[sample_index]
+            distance = math.dist((row["x"], row["y"]), targets[target_index]["xy"])
+            cargo = int(target_deliveries) - len(delivered_ids)
+            if physical_delivery_ok(True, round(float(stationary_s[sample_index]), 3), distance, cargo, delivery_tol):
+                delivered_ids.add(target_index)
 
-        cross_view_valid = sum(1 for r in formatted_reports if r["cross_view"])
+        valid_deliveries = len(delivered_ids)
+        cross_view_valid = sum(formatted_reports[i]["cross_view"] for i in matched)
         mission_success = (
             valid_deliveries >= int(target_deliveries)
             and collisions == 0
@@ -339,8 +374,7 @@ def run_ros2_evaluator(args):
             for c in getattr(msg, "contacts", []):
                 c1 = getattr(c.collision1, "name", "")
                 c2 = getattr(c.collision2, "name", "")
-                other = c2 if "rover" in c1 else c1
-                if other and "terrain" not in other:
+                if _is_obstacle_contact(c1, c2):
                     has_obstacle_hit = True
                     break
             with self._lock:
@@ -373,9 +407,12 @@ def run_ros2_evaluator(args):
                     except Exception:
                         pass
 
-            with self._lock:
-                rover_pose = self._latest_rover
-            if rover_pose is not None and now_s - self._last_sample_s >= 0.095:
+            rover_pose = None
+            if now_s - self._last_sample_s >= 0.095:
+                with self._lock:
+                    rover_pose = self._latest_rover
+                    self._latest_rover = None
+            if rover_pose is not None:
                 self._last_sample_s = now_s
                 x, y, z, roll_d, pitch_d, yaw_r = rover_pose
                 self.trajectory.append(dict(
