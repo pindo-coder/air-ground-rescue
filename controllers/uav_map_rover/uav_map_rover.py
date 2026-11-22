@@ -394,6 +394,20 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
         rover_radius_m=settings["rover_radius_m"],
     )
     vctp = VctpChecker(FineTerrainSurface.from_uav_map(map_file))
+    policy = os.environ.get("UAV_LOCAL_POLICY", "rule")
+    experiment = None
+    encode_rgbd_fn = None
+    if policy != "rule":
+        from local_policy import LocalPolicyExperiment
+        from policy_features import encode_rgbd as encode_rgbd_fn
+
+        experiment = LocalPolicyExperiment(
+            policy,
+            checkpoint=os.environ.get("UAV_LOCAL_CHECKPOINT") or None,
+            record_to=None,
+            expert_mix=0.0,
+            seed=int(os.environ.get("UAV_LOCAL_SEED", "17")),
+        )
 
     drive_start_s = robot.getTime()
     nav_budget_s = float(os.environ.get("UAV_NAV_TIMEOUT_S", "360"))
@@ -485,6 +499,7 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     onboard_map=onboard_map,
                     initial_route_xy=chosen["route_xy_m"],
                     goal_xy=chosen["approach_xy_m"],
+                    local_planner=experiment,
                     settle_time_s=0.4,  # We perform full face-victim + 2.2 s settle right after arrival.
                     goal_tolerance_m=0.28,
                 )
@@ -515,10 +530,13 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                         now, dt, pose_xyz, (rpy[0], rpy[1], yaw),
                         estimator.speed_mps, estimator.yaw_rate_rad_s,
                         lidar_body, lidar_enu, rgbd_body, rgbd_enu, drop_count,
+                        rgbd_frame=encode_rgbd_fn(rgb_cam.getImage(), depth_img) if experiment else None,
                     )
                     left_rad, right_rad = wheel_velocities_rad_s(v_cmd, w_cmd)
                     motors[0].setVelocity(left_rad)
                     motors[1].setVelocity(right_rad)
+                    if experiment:
+                        experiment.observe_executed(v_cmd, w_cmd, now)
 
                     if controller.report.replan_count > leg_replans_before:
                         total_replans += controller.report.replan_count - leg_replans_before
@@ -680,10 +698,12 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
             for motor in motors:
                 motor.setVelocity(0.0)
 
+    local_policy_stats = experiment.close(overall_status) if experiment else dict(policy="rule")
     status_payload = dict(
         mode="rescue",
         detector=detector_mode,
         planner=planner_mode,
+        local_policy=local_policy_stats,
         status=overall_status,
         reason=stop_reason,
         drive_start_s=round(float(drive_start_s), 3),

@@ -10,6 +10,8 @@
 /evaluation/search/*.json
 /models/*.pt
 !/models/yolo11n_victim.pt
+!/models/local_policy_bc.pt
+!/models/local_policy_dagger.pt
 
 # Python caches and local environments
 __pycache__/

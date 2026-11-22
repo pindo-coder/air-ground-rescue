@@ -79,17 +79,24 @@ python -m venv .venv
 
 ---
 
-## 五、神经网络车端局部规划（老师要求 · 已搭通框架并首轮试跑）
+## 五、神经网络车端局部规划（老师要求 · 已全场达标并接入主救援闭环）
 
 详细技术文档见 `docs/LOCAL_POLICY.md`。
-- **核心模块**：`controllers/uav_map_rover/policy_features.py`、`local_policy.py`、`tools/train_local_policy.py`、`tools/compare_local_policies.py`、`tests/search/test_local_policy.py`。
-- **网络架构（18,949 参数，CPU 10 Hz 实时推理）**：
+- **核心模块**：`controllers/uav_map_rover/policy_features.py`、`local_policy.py`、`tools/train_local_policy.py`、`tools/compare_local_policies.py`、`tests/search/test_local_policy.py`，已接入 `tools/run_uav_rescue.py --local-policy neural --checkpoint models/local_policy_dagger.pt`。
+- **网络架构（18,949 参数，CPU 10 Hz 实时推理，中位耗时 `1.07 ms`）**：
   - **视觉分支**：对齐的 RGB + 深度 + 深度有效掩码（`5 × 24 × 32`）→ 两层轻量卷积；
   - **近场障碍分支**：LiDAR 与 RGB-D 分别按 36 个车体角扇区提取的障碍距离与命中掩码 → 全连接；
   - **导航状态分支**：车体系前瞻路点、目标距离、轮速、上一拍 `(v, w)`、横滚/俯仰、11 个先验+车载地图净空查询 → 全连接；
   - **输出与损失**：三分支融合输出归一化 `(v, w)`（分母 `0.42 m/s`、`0.85 rad/s`，Smooth L1 损失）与 3 类动作模式（停止/原地转向/行驶，类别加权交叉熵 × 0.35）。
-- **BC + DAgger 与安全护栏**：BC 由规则专家在 Webots 采集标注；DAgger 以概率 $\beta$ 混采专家、其余拍执行网络动作并经共用姿态/车速/1.2 s 净空护栏检查，聚合历史数据微调；支持三组同条件哈希核对评测（规则 vs BC vs BC+DAgger）。
-- **首轮试跑现状（`runs/local_learning_pilot_20261121/`）**：仅在 D 局部图用 478 帧 BC / 928 帧 DAgger（停止样本为 0）跑了两组未见碎石测试，三组留出到达率均为 `0/2`（DAgger 0 碰撞但在行驶 1.9 m 后走廊判定阻塞提前安全停车；规则与 BC 在终点附近出现 5.7–5.8 cm 轻微接触，略超 5.5 cm 判定阈值）。**这是下一阶段第一优先攻关项。**
+- **D 全场大规模 BC + DAgger 训练（`runs/local_learning_D_full/`）**：
+  - 采集 2 条 100% 零碰撞 D 全场 40 m 河谷专家轨迹（2,818 帧训练）+ 1 条独立障碍构型验证轨迹（1,340 帧）预训练 **`models/local_policy_bc.pt`**（`val_loss=0.0290`，`mae_v=0.0133 m/s`，`mae_w=0.0294 rad/s`，模式准确率 **`99.78%`**）；
+  - 用 BC 策略在 2 个全新障碍构型上实跑 DAgger 回采（`expert_mix=0.15`，两条均 **`ARRIVED`、0 碰撞**，共聚合 **5,361 帧训练样本**），以 `lr=0.00025` 微调导出 **`models/local_policy_dagger.pt`**（验证误差进一步全面超越 BC：`val_loss=0.0276`、`mae_v=0.0126 m/s`、`mae_w=0.0280 rad/s`、模式准确率 **`99.78%`**）。
+- **D 全场留出 0.65 m 碎石三组同条件对比（`runs/local_learning_D_full/compare_full_detour_v2/comparison.json`，0% 专家混合）**：
+  - **规则专家**：`ARRIVED`，0 碰撞，`160.0 s`，`42.95 m`，终点误差 `0.323 m`，重规划 `8` 次；
+  - **Neural BC（`bc.pt`）**：**`ARRIVED`**，**0 碰撞**，`163.4 s`，`43.00 m`，终点误差 **`0.274 m`**（优于规则），重规划 **`6` 次**，**`97.4%` 直接神经网络控制**（回退仅 `2.60%`），P95 推理 **`1.19 ms`**；
+  - **Neural BC + DAgger（`dagger_v2.pt`）**：**0 碰撞**，回退率进一步降至全组最低 **`1.56%`**、重规划降至最低 **`5` 次**，180 s 时限内行驶 `38.31 m` 距终点仅 `1.49 m`（略超时未进停稳）；
+- **终极全栈合体实跑验收（`runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_205200_21688`）**：
+  - **纯 v2 全色域 YOLO + DUCPP/VCTP/IGHA\* + 神经网络 DAgger 局部规划（`models/local_policy_dagger.pt`，`expert_mix=0`）**：**`MISSION_SUCCESS`**，全程自主行驶 **`69.26 m` / `284.0 s`**、**`2,620 / 2,755 = 95.1%` 直接由神经网络控制**（中位推理 `1.07 ms`、P95 `1.89 ms`）、**`0` 碰撞、`0` 车体接触**、**`2/2` 全部空地跨视角 YOLO 融合确认**（score `0.917`、`0.838`）、**`2/2` 有效物资投送**（`1.59 m`、`1.49 m`），融合定位 RMSE **`0.372 m`**！
 
 ---
 
@@ -159,6 +166,8 @@ python -m venv .venv
 .venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --max-victims 2 --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
 # 随机刷新伤员位置与随机服装颜色（需全新无人机重飞，可加 --nadir-only 加速）：
 .venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --nadir-only --detector yolo --planner igha_vctp --max-victims 2 --victim-seed 42 --random-clothing
+# 终极全栈合体（纯 v2 YOLO + VCTP/IGHA* + 神经网络 DAgger 局部规划）：
+.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --local-policy neural --checkpoint models/local_policy_dagger.pt --max-victims 2 --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
 
 # 5. 零泄漏多色随机位置 YOLO 数据采集、微调与留出 D 场景三重压力评测
 .venv\Scripts\python.exe tools/collect_yolo_dataset.py --out runs/yolo_victim_dataset_v2
@@ -202,4 +211,5 @@ python -m venv .venv
 | **纯 YOLO 救援闭环验收（标准 D）** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_163823_37812/evaluation/summary.json`、`rescue_preview.png` | **`MISSION_SUCCESS`**，3/3 检出、2/2 跨视角融合、2/2 投送（1.53/1.46 m）、0 碰撞 |
 | **随机位置 + 随机换装全新重飞实测** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_randv42_20261121_190007_11920/evaluation/rescue_preview.png`、`rover/victim_03_confirm.jpg` | 实时航飞检出 3/3 酒红/绯红随机伤员（0 误报，误差 `0.08–0.14 m`）；车行 `111.68 m` 0 碰撞，完成酒红伤员跨视角确认与 `1.42 m` 投送 |
 | 720p 跟车仿真视频（带实时小地图） | `runs/uav_rescue_D_full_surrogate_rgbd_igha_vctp_clear_20261121_145756_27572/evaluation/rescue_simulation.mp4`、`video_keyframes.jpg` | 55.9 s (4× 速, 1118 帧, H.264, 82 MB)，`MISSION_SUCCESS` |
-| 神经网络局部规划首轮试跑 | `runs/local_learning_pilot_20261121/`、`docs/LOCAL_POLICY.md` | 规则 vs BC vs BC+DAgger 首轮试跑（下阶段重点攻关） |
+| **终极全栈合体搜救（纯 YOLO + VCTP/IGHA\* + 神经 DAgger）** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_205200_21688/evaluation/rescue_preview.png`、`summary.json` | **`MISSION_SUCCESS`**，95.1% 神经网络控制（1.07 ms）、69.26 m 0 碰撞、2/2 跨视角确认、2/2 投送（1.59/1.49 m）、RMSE `0.372 m` |
+| D 全场神经网络局规训练与三组留出对比 | `runs/local_learning_D_full/compare_full_detour_v2/comparison.json`、`models/local_policy_bc.pt`、`models/local_policy_dagger.pt` | BC `ARRIVED` 0 碰（0.274 m 误差，97.4% 神经）；DAgger 0 碰最低回退 `1.56%` / 最少重规划 `5` 次 |
