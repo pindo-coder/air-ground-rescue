@@ -148,10 +148,12 @@ def main():
     if not sdf_path.is_file():
         parser.error(f"Missing {sdf_path}. Run `python3 tools/export_gazebo_d.py` first.")
 
+    # Offline YOLO can import OpenCV and set Qt plugin paths for its own GUI.
+    # Keep the original environment for Gazebo's native Qt runtime.
+    env = os.environ.copy()
     run_dir, cfg, flight_end_s, obstacles_path = prepare_run_directory(args)
     print(f"[Gazebo Mission] Run directory: {run_dir}", flush=True)
 
-    env = os.environ.copy()
     env["GZ_UAV_SURVEY_RUN"] = str(run_dir)
     env["GZ_UAV_FLIGHT_END"] = str(flight_end_s)
     env["GZ_PARK_ROVER_DURING_SURVEY"] = "0" if args.map_from else "1"
