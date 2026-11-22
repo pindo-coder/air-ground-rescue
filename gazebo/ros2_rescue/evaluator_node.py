@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent privileged ground-truth evaluator & world-spawner for Gazebo Harmonic + ROS 2 Jazzy.
 
-Subscribes ONLY to `/eval/world_poses` (`/world/search_d/pose/info`) and `/eval/rover_contact`.
+Subscribes ONLY to `/eval/world_poses` (`/model/rover/pose`) and `/eval/rover_contact`.
 Strictly isolated from `uav_mapper_node.py` and `rover_nav_node.py` (zero truth leakage).
 """
 

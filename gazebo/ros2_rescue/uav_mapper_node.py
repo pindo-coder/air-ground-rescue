@@ -272,7 +272,7 @@ def run_ros2_mapper(args):
     import rclpy
     from rclpy.node import Node
     from rclpy.parameter import Parameter as RosParam
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
     from sensor_msgs.msg import Image, Imu, NavSatFix
 
     rclpy.init()
@@ -301,8 +301,10 @@ def run_ros2_mapper(args):
             self._latest_imu = None
             self._fpv_count = 0
 
-            self.create_subscription(Image, "/drone/rgb", self._on_rgb, qos_profile_sensor_data)
-            self.create_subscription(Image, "/drone/depth", self._on_depth, qos_profile_sensor_data)
+            # Each low-rate survey frame is used for a paired RGB-D observation.
+            survey_qos = QoSProfile(depth=3, reliability=ReliabilityPolicy.RELIABLE)
+            self.create_subscription(Image, "/drone/rgb", self._on_rgb, survey_qos)
+            self.create_subscription(Image, "/drone/depth", self._on_depth, survey_qos)
             self.create_subscription(NavSatFix, "/drone/gps", self._on_gps, qos_profile_sensor_data)
             self.create_subscription(Imu, "/drone/imu", self._on_imu, qos_profile_sensor_data)
             if args.record_fpv:

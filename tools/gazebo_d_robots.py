@@ -129,6 +129,15 @@ def add_contact_sensor(link, collision_names, namespace="rover", rate=10):
         element(contact, "collision", cname)
 
 
+def add_evaluation_pose(model):
+    publisher = element(model, "plugin", filename="gz-sim-pose-publisher-system",
+                        name="gz::sim::systems::PosePublisher")
+    element(publisher, "publish_model_pose", "true")
+    element(publisher, "publish_link_pose", "false")
+    element(publisher, "use_pose_vector_msg", "true")
+    element(publisher, "update_frequency", "50")
+
+
 def add_inertia(link, mass, moments, center=(0, 0, 0)):
     body = element(link, "inertial")
     element(body, "mass", str(mass))
@@ -268,6 +277,7 @@ def add_rover(world, source, exporter, friction):
     element(joints, "topic", "/rover/joint_states")
     for joint in (*left_joints, *right_joints):
         element(joints, "joint_name", joint)
+    add_evaluation_pose(model)
 
 
 def add_drone(world, source, exporter, image_period):
@@ -275,6 +285,7 @@ def add_drone(world, source, exporter, image_period):
     model = element(world, "model", name="drone")
     Placement().child(body, fields).write(model)
     element(model, "static", "true")
+    add_evaluation_pose(model)
     link = element(model, "link", name="body")
     write_body(exporter, body, link, parameters=fields)
     for child in body.fields["children"]:

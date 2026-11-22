@@ -73,6 +73,13 @@ class GazeboDExportTest(unittest.TestCase):
         rover_chassis = world.find("./model[@name='rover']/link[@name='chassis']")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chase_cam']/topic"), "/rover/chase_cam")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chassis_contact']/topic"), "/rover/contact")
+        for model in ("rover", "drone"):
+            publisher = world.find(f"./model[@name='{model}']/plugin[@name='gz::sim::systems::PosePublisher']")
+            self.assertIsNotNone(publisher)
+            self.assertEqual(publisher.findtext("publish_model_pose"), "true")
+            self.assertEqual(publisher.findtext("publish_link_pose"), "false")
+            self.assertEqual(publisher.findtext("use_pose_vector_msg"), "true")
+            self.assertEqual(publisher.findtext("update_frequency"), "50")
 
         drone_body = world.find("./model[@name='drone']/link[@name='body']")
         self.assertEqual(drone_body.findtext("./sensor[@name='fpv_cam']/topic"), "/drone/fpv_cam")
@@ -103,7 +110,8 @@ class GazeboDExportTest(unittest.TestCase):
             "/rover/imu", "/rover/gps", "/rover/lidar", "/rover/lidar/points",
             "/rover/rgb", "/rover/depth", "/rover/chase_cam",
             "/drone/rgb", "/drone/depth", "/drone/fpv_cam", "/drone/gps", "/drone/imu",
-            "/eval/world_poses", "/eval/rover_contact",
+            "/eval/world_poses", "/eval/drone_pose", "/eval/rover_contact",
+            "/model/rover/pose", "/model/drone/pose",
         ):
             self.assertIn(f'"{topic}"', text)
 

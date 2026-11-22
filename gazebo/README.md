@@ -86,7 +86,7 @@ gz sdf -k gazebo/generated/D/search_d.sdf
 
 详细 ROS 2 节点设计、坐标系转换与话题映射见 [ROS 2 Jazzy 运行时文档](ros2_rescue/README.md)。
 
-- 严格遵守零真值泄漏红线：`/world/search_d/pose/info`（桥接至 `/eval/world_poses`）与 `/rover/contact`（桥接至 `/eval/rover_contact`）**仅由独立评测节点 `evaluator_node.py` 订阅**，建图与车端规划节点绝不读取任何仿真真值。
+- 小车与无人机的 PosePublisher 分别桥接至 `/eval/world_poses` 与 `/eval/drone_pose`，保留实体帧名和仿真时间戳。`evaluator_node.py` 使用小车位姿和 `/eval/rover_contact` 独立评测，建图与车端规划节点只使用传感器输入。
 - 本地回归测试：
 ```bash
 python3 -m unittest discover -s tests -p 'test_gazebo_*.py' -v
