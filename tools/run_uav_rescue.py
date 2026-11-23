@@ -512,9 +512,56 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
     return None
 
 
+WEATHER_PRESETS = {
+    "clear": None,
+    "lowlight": dict(
+        luminosity=0.22,
+        fog_color="0.14 0.17 0.22",
+        fog_range=110.0,
+        sun_intensity=0.36,
+        sun_ambient=0.10,
+        fill_intensity=0.16,
+    ),
+    "fog": dict(
+        luminosity=0.64,
+        fog_color="0.72 0.76 0.78",
+        fog_range=38.0,
+        sun_intensity=0.80,
+        sun_ambient=0.22,
+        fill_intensity=0.45,
+    ),
+}
+
+
+def apply_weather_to_world(world_path, weather):
+    """Apply realistic Webots Fog & DirectionalLight weather degradation to a temporary world."""
+    spec = WEATHER_PRESETS.get(weather)
+    if not spec:
+        return
+    scene = world_path.read_text(encoding="utf-8")
+    scene = re.sub(r"(\bluminosity\s+)[0-9.]+", rf"\g<1>{spec['luminosity']}", scene, count=1)
+    scene = re.sub(
+        r"Fog\s*\{[^}]*\}",
+        f"Fog {{\n  color {spec['fog_color']}\n  visibilityRange {spec['fog_range']}\n}}",
+        scene, count=1,
+    )
+    lights = list(re.finditer(r"DirectionalLight\s*\{[^}]*\}", scene))
+    if len(lights) >= 1:
+        b0 = lights[0].group(0)
+        b0_new = re.sub(r"(\bintensity\s+)[0-9.]+", rf"\g<1>{spec['sun_intensity']}", b0)
+        b0_new = re.sub(r"(\bambientIntensity\s+)[0-9.]+", rf"\g<1>{spec['sun_ambient']}", b0_new)
+        scene = scene[:lights[0].start()] + b0_new + scene[lights[0].end():]
+    lights = list(re.finditer(r"DirectionalLight\s*\{[^}]*\}", scene))
+    if len(lights) >= 2:
+        b1 = lights[1].group(0)
+        b1_new = re.sub(r"(\bintensity\s+)[0-9.]+", rf"\g<1>{spec['fill_intensity']}", b1)
+        scene = scene[:lights[1].start()] + b1_new + scene[lights[1].end():]
+    world_path.write_text(scene, encoding="utf-8")
+
+
 def run(profile="full", detector="yolo", planner="igha_vctp",
         max_victims=2, refinement_strategy="route_value", nadir_only=False,
-        victim_seed=None, random_clothing=False,
+        victim_seed=None, random_clothing=False, weather="clear",
         local_policy="rule", checkpoint=None,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
@@ -534,8 +581,9 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
     injected = [] if obstacle == "none" else OBSTACLE_PRESETS[(profile, obstacle)]
     obs_tag = "clear" if obstacle == "none" else obstacle
     rand_tag = f"_randv{victim_seed}" if victim_seed is not None else ""
+    wx_tag = f"_{weather}" if weather and weather != "clear" else ""
 
-    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}{rand_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}{rand_tag}{wx_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
     folder = ROOT / "runs" / run_id
     folder.mkdir(parents=True)
     (folder / "map_config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -569,6 +617,9 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
 
     world = ROOT / "worlds" / f"_validation_{run_id}.wbt"
     build_nav_world(world, config, injected, reuse_map=reuse_map)
+    if weather and weather != "clear":
+        apply_weather_to_world(world, weather)
+        print(f"[Run rescue] Applied Webots weather degradation: {weather}.", flush=True)
     randomized_victims = None
     if victim_seed is not None:
         v_count = 2 if profile == "local" else 3
@@ -713,6 +764,8 @@ def main():
                         help="Explicit integer seed for randomized victim spawning in Scene D.")
     parser.add_argument("--random-clothing", action="store_true",
                         help="Also randomize victim shirt & pants colors when spawning random victims.")
+    parser.add_argument("--weather", choices=("clear", "lowlight", "fog"), default="clear",
+                        help="Webots weather/lighting stress preset: clear, lowlight dusk, or dense valley fog.")
     parser.add_argument("--local-policy", choices=("rule", "neural"), default="rule",
                         help="Onboard rover local planner: rule baseline or neural network checkpoint.")
     parser.add_argument("--checkpoint", default=None,
@@ -742,6 +795,7 @@ def main():
         nadir_only=args.nadir_only,
         victim_seed=vseed,
         random_clothing=args.random_clothing,
+        weather=args.weather,
         local_policy=args.local_policy,
         checkpoint=args.checkpoint,
         obstacle=args.obstacle,

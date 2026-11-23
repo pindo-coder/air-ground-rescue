@@ -95,6 +95,9 @@ python -m venv .venv
   - **车载模块化双仓物资精准投放机构（`protos/ResearchRover.proto` + `controllers/uav_survey/uav_survey.py`）**：后甲板加装低剖面 CNC 双仓释放架（高度 ≤ `0.344 m`，零雷达/前视遮挡），满载 2 个带白十字橙色物资箱，每次物理投送时同步卸载对应舱位箱体；
   - **7 组多随机位置 + 全色域随机换装实跑统计**：涵盖标准 D 全程全栈（`224203_1688`，89.1 s 中文 HUD 全程实录 `MISSION_SUCCESS` · 0 碰撞）、双仓机构 100% IGHA\*（`161638_22012`，`MISSION_SUCCESS` · 0 碰撞）、全非蓝衣随机 `seed=17`（`200923_13096`，`MISSION_SUCCESS` · 2/2 投送 · RMSE `0.239 m` · 0 碰撞）、`seed=42`、`seed=7` 及极端不可达 `seed=101/202`（安全拒入 0 碰撞），空中纯 YOLO 总检出 **`21/21 = 100%`**、**`0` 误报**、平均定位误差 **`0.130 ± 0.043 m`**；
   - **安全平滑指标、真机摄影测量接口与中文指挥调度大屏**：`tools/safety_metrics.py`、`tools/import_real_dsm.py`（WebODM/Mini 4 Pro GeoTIFF DSM → `uav_map.npz` + `VCTP+IGHA*` 规划）、`tools/rescue_dashboard.py`（支持本地交互服务与单文件离线 HTML 导出 `runs/援来有路_空地协同指挥调度大屏_离线版.html`），配套单元测试 `tests/search/test_competition_tools.py`。
+- **2026-11-23 极端灾后工况压力测试新增（优先级 4 已全部补齐，全仓库 82/82 单元测试通过）**：
+  - **动态障碍物主动避让三组同条件对比（`--obstacle dynamic`，`runs/local_learning_D_full/compare_full_dynamic/comparison.json`，`held_out=true`）**：在 `OnboardObstacleMap` 加入近场 `0.45–2.6 m` 自由空间 1.8 s 动态残影衰减清除；河谷走廊部署 `0.25 m/s` 横向穿越移动障碍后，**规则专家（1 碰撞 `-6.4 cm` 失败）**与**纯 BC（1 碰撞 `-7.8 cm` 失败）**双双撞击停摆，**唯有 `BC + DAgger` 以最小 `+57.5 cm` 动态安全裕度、0 碰撞、P95 推理 `0.995 ms`（<1 ms）、`95.5%` 神经直控安全到达终点（`158.7 s`，误差 `0.285 m`）**；
+  - **Webots 真实天气视觉退化测试（`tools/run_uav_rescue.py --weather {clear,lowlight,fog}`）**：在真实 Webots 渲染下注入黄昏低照度（光强 -80%，`20261123_170102_8096`）与山谷 38 m 浓雾（`20261123_171203_25240`），零泄漏 v2 YOLO11n 空中检出均保持 **`3/3 = 100%`、`0` 误报**（平均定位误差分别仅 **`12.4 cm` / `14.2 cm`**），车载抵近复核置信度仍达 **`0.853` / `0.897`**（融合 RMSE **`0.220 m` / `0.184 m`**）。
 
 ---
 

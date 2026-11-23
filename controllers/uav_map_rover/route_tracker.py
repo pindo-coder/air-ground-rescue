@@ -381,7 +381,9 @@ class OnboardObstacleMap:
             self.fine_cost = None
 
         self.confirm_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
+        self.miss_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
         self.fine_onboard_blocked = np.zeros(self.fine_grid.shape, dtype=bool)
+        self.stale_clear_ticks = 18  # 1.8 s of clear close-range LiDAR view frees vacated dynamic cells.
         self.cell_sources = {}  # fine (r, c) -> set of {"lidar", "rgbd"}
         self.coarse_sources = {}  # coarse (r, c) -> set of {"lidar", "rgbd"}
         self._dirty = True
@@ -474,8 +476,29 @@ class OnboardObstacleMap:
                 if (r, c) not in filtered:
                     self.confirm_counts[r, c] = max(0, int(self.confirm_counts[r, c]) - 1)
 
+        # Dynamic obstacle clearing: if a previously latched onboard cell is within close 360 deg
+        # LiDAR range (0.45..2.6 m) and gets zero hits for `stale_clear_ticks`, un-latch it so a
+        # moving obstacle does not leave a permanent ghost wall across a passable corridor.
+        latched = np.argwhere(self.fine_onboard_blocked)
+        if len(latched):
+            for r, c in latched:
+                key = (int(r), int(c))
+                if key in filtered:
+                    self.miss_counts[r, c] = 0
+                    continue
+                center = self.fine_grid.center(key)
+                dist = float(np.linalg.norm(center - rover_xy))
+                if 0.45 <= dist <= 2.6:
+                    self.miss_counts[r, c] = int(self.miss_counts[r, c]) + 1
+                    if self.miss_counts[r, c] >= self.stale_clear_ticks:
+                        self.fine_onboard_blocked[r, c] = False
+                        self.confirm_counts[r, c] = 0
+                        self.miss_counts[r, c] = 0
+                        self._dirty = True
+
         newly_blocked = []
         for (r, c), sources in filtered.items():
+            self.miss_counts[r, c] = 0
             self.confirm_counts[r, c] = min(10, int(self.confirm_counts[r, c]) + 1)
             self.cell_sources.setdefault((r, c), set()).update(sources)
             self.coarse_sources.setdefault((r // self.subdiv, c // self.subdiv), set()).update(sources)
