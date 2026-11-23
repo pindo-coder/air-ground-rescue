@@ -34,8 +34,9 @@ def _spawn_test_obstacles(simulation, terrain, obstacles):
         # Sink slightly (-0.03 m) so obstacle seats solidly on sloped ground.
         cz = ground_z + 0.5 * sz - 0.03
         name = item.get("name", f"injected_obstacle_{index + 1}")
+        def_name = f"INJECTED_OBSTACLE_{index + 1}"
         vrml = (
-            f'DEF INJECTED_OBSTACLE_{index + 1} Solid {{ '
+            f'DEF {def_name} Solid {{ '
             f'translation {x} {y} {cz} rotation 0 0 1 {yaw} name "{name}" '
             f'children [ Shape {{ '
             f'appearance PBRAppearance {{ baseColor {color[0]} {color[1]} {color[2]} roughness 0.92 metalness 0 }} '
@@ -43,14 +44,19 @@ def _spawn_test_obstacles(simulation, terrain, obstacles):
             f'boundingObject Box {{ size {sx} {sy} {sz} }} }}'
         )
         children.importMFNodeFromString(-1, vrml)
-        spawned.append(dict(
+        rec = dict(
+            def_name=def_name,
             name=name,
             kind=item.get("kind", "debris"),
             xy_enu_m=[x, y],
             ground_z_m=round(float(ground_z), 3),
             size_m=[sx, sy, sz],
             yaw_rad=yaw,
-        ))
+        )
+        if item.get("xy_end_enu_m") is not None:
+            rec["xy_end_enu_m"] = [float(item["xy_end_enu_m"][0]), float(item["xy_end_enu_m"][1])]
+            rec["speed_mps"] = float(item.get("speed_mps", 0.25))
+        spawned.append(rec)
     return spawned
 
 
@@ -100,6 +106,26 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
     arrival_time_s = None
     settled_after_status_s = None
 
+    # Resolve any dynamic moving obstacles so Supervisor smoothly steps them along terrain.
+    dyn_handles = []
+    for ob in spawned_obstacles:
+        if ob.get("xy_end_enu_m") is not None and ob.get("def_name"):
+            node = simulation.getFromDef(ob["def_name"])
+            if node is not None:
+                p0 = np.asarray(ob["xy_enu_m"], dtype=float)
+                p1 = np.asarray(ob["xy_end_enu_m"], dtype=float)
+                seg_len = max(0.05, float(np.linalg.norm(p1 - p0)))
+                dyn_handles.append(dict(
+                    name=ob["name"],
+                    trans_field=node.getField("translation"),
+                    p0=p0, p1=p1, seg_len=seg_len,
+                    speed=float(ob.get("speed_mps", 0.25)),
+                    sz=float(ob["size_m"][2]),
+                    rad=0.5 * max(float(ob["size_m"][0]), float(ob["size_m"][1])),
+                ))
+    min_dynamic_clearance_m = float("inf")
+    dyn_log_rows = []
+
     with (eval_dir / "trajectory.csv").open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow([
@@ -111,13 +137,23 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
         while simulation.step(period_ms) != -1:
             now = simulation.getTime()
             pos = rover.getPosition()
+            xy = np.asarray(pos[:2], dtype=float)
+            for dh in dyn_handles:
+                elapsed_d = max(0.0, now - drive_start_s)
+                phase = (elapsed_d * dh["speed"]) / dh["seg_len"]
+                u = 1.0 - abs((phase % 2.0) - 1.0)
+                oxy = dh["p0"] + u * (dh["p1"] - dh["p0"])
+                oz = float(height_at(terrain, float(oxy[0]), float(oxy[1]))) + 0.5 * dh["sz"] - 0.03
+                dh["trans_field"].setSFVec3f([float(oxy[0]), float(oxy[1]), oz])
+                clear_m = float(np.linalg.norm(xy - oxy)) - dh["rad"] - 0.30
+                min_dynamic_clearance_m = min(min_dynamic_clearance_m, clear_m)
+                dyn_log_rows.append([round(now, 3), dh["name"], round(float(oxy[0]), 4), round(float(oxy[1]), 4), round(clear_m, 4)])
             vel = rover.getVelocity()
             orient = rover.getOrientation()
             roll_deg, pitch_deg, yaw_rad, up_z = _orientation_rpy_deg(orient)
             max_abs_roll_deg = max(max_abs_roll_deg, abs(roll_deg))
             max_abs_pitch_deg = max(max_abs_pitch_deg, abs(pitch_deg))
 
-            xy = np.asarray(pos[:2], dtype=float)
             if prev_xy is not None:
                 path_length += float(np.linalg.norm(xy - prev_xy))
             prev_xy = xy
@@ -271,6 +307,8 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
         drop_detection_frames=rover_status.get("drop_detection_frames", 0),
         onboard_blocked_cells=rover_status.get("onboard_blocked_cells", []),
         injected_obstacles=spawned_obstacles,
+        min_dynamic_clearance_m=(round(float(min_dynamic_clearance_m), 4)
+                                 if math.isfinite(min_dynamic_clearance_m) else None),
         vctp_audit=selected.get("vctp_audit") or selected.get("astar_vctp_audit"),
         igha_stats=selected.get("igha_vctp", {}).get("stats") if "igha_vctp" in selected else None,
         dual_route=selected.get("dual_route"),
@@ -280,6 +318,11 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
             max=round(float(np.max(loc_errors)), 4),
         ) if loc_errors else None),
     )
+    if dyn_log_rows:
+        with (eval_dir / "dynamic_obstacles.csv").open("w", newline="", encoding="utf-8") as df:
+            dw = csv.writer(df)
+            dw.writerow(["time_s", "name", "obs_x", "obs_y", "clearance_m"])
+            dw.writerows(dyn_log_rows)
     (eval_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
         simulation.exportImage(str(eval_dir / "final_scene.png"), 90)

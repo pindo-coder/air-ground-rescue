@@ -16,7 +16,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from igha_star import plan_igha_star
 from import_real_dsm import dsm_to_uav_map
+from posture_casualty import ALL_POSTURES, POSTURE_LOCAL_POINTS, build_posture_casualty_vrml
 from rescue_dashboard import build_html
+from route_tracker import OnboardObstacleMap
+from run_uav_rescue import apply_weather_to_world
 from safety_metrics import compute_run_safety_smoothness
 from survey_map import FREE, Grid
 from vctp import FineTerrainSurface, VctpChecker
@@ -76,6 +79,45 @@ class CompetitionToolsTests(unittest.TestCase):
             html = build_html(static_payload={"run_id": "test_run", "evaluation": {"status": "MISSION_SUCCESS"}}, runs_index=[])
             self.assertIn("援来有路", html)
             self.assertIn("test_run", html)
+
+    def test_dynamic_stale_cell_clearing_and_weather_world_patch(self):
+        coarse = Grid.from_bounds([[0.0, 0.0], [6.0, 6.0]], 0.5)
+        states = np.full(coarse.shape, FREE, dtype=np.int8)
+        omap = OnboardObstacleMap(coarse, states, np.zeros(coarse.shape), None, rover_radius_m=0.40)
+        rover_xy = np.array([2.0, 3.0])
+        dyn_pt = np.array([[3.2, 3.0]])
+        for _ in range(3):
+            omap.update(rover_xy, dyn_pt, np.empty((0, 2)))
+        self.assertTrue(omap.fine_onboard_blocked.any())
+        # Once the dynamic obstacle leaves close LiDAR range, cell clears after stale_clear_ticks.
+        for _ in range(omap.stale_clear_ticks + 1):
+            omap.update(rover_xy, np.empty((0, 2)), np.empty((0, 2)))
+        self.assertFalse(omap.fine_onboard_blocked.any())
+
+        with tempfile.TemporaryDirectory() as td:
+            w = Path(td) / "test.wbt"
+            w.write_text("Background { luminosity 1.05 }\nFog { color 0.6 0.6 0.6 visibilityRange 650 }\nDirectionalLight { ambientIntensity 0.30 intensity 2.1 }\nDirectionalLight { intensity 0.70 }\n", encoding="utf-8")
+            apply_weather_to_world(w, "fog")
+            txt = w.read_text(encoding="utf-8")
+            self.assertIn("visibilityRange 38.0", txt)
+            self.assertIn("luminosity 0.64", txt)
+
+    def test_multi_posture_casualty_vrml_and_keypoints(self):
+        flat = lambda x, y: 0.25
+        for idx, posture in enumerate(ALL_POSTURES, start=1):
+            pts = POSTURE_LOCAL_POINTS[posture]
+            self.assertEqual(pts.ndim, 2)
+            self.assertEqual(pts.shape[1], 3)
+            self.assertTrue(np.isfinite(pts).all())
+            vrml = build_posture_casualty_vrml(
+                f"VICTIM_{idx}", f"victim_{idx}", [1.0, -2.0], 0.4, flat,
+                posture=posture, shirt_def=f"SHIRT_APP_{idx}", pants_def=f"PANTS_APP_{idx}",
+            )
+            self.assertIn(f"DEF VICTIM_{idx} Solid", vrml)
+            self.assertIn(f"DEF SHIRT_APP_{idx}", vrml)
+            self.assertIn(f"DEF PANTS_APP_{idx}", vrml)
+        # half_buried keypoints strictly cover exposed upper body only (x <= 0.0).
+        self.assertLessEqual(float(POSTURE_LOCAL_POINTS["half_buried"][:, 0].max()), 0.0)
 
 
 if __name__ == "__main__":

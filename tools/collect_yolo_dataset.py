@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 from build_search_worlds import build, replace_node
+from posture_casualty import ALL_POSTURES, NON_SUPINE_POSTURES, build_posture_casualty_vrml
 from run_search import ROOT, executable_path, simulator_has_errors
 from scene_elements import RescueElements
 
@@ -48,7 +49,7 @@ def _tag_clothing_appearances(text, tag_index):
     return "\n".join(out_lines), (shirt_def if shirt_tagged else None), (pants_def if pants_tagged else None)
 
 
-def build_collector_world(world_path, scene_key):
+def build_collector_world(world_path, scene_key, multi_posture=False):
     """Build a temporary Webots world based on Scene A, B, or C with taggable multicolored casualties."""
     assert scene_key in ("A", "B", "C"), "Scene D must remain strictly held out!"
     source = ROOT / "worlds" / f"search_{scene_key}.wbt"
@@ -60,24 +61,37 @@ def build_collector_world(world_path, scene_key):
     scene = replace_node(scene, r"\bDEF\s+ROVER\s+ResearchRover", "")
     scene = replace_node(scene, r"\bDEF\s+SEARCH_REFEREE\s+Robot", "")
 
-    # Tag the existing scene casualty's clothing appearances as index 0.
+    # Tag the existing scene casualty's clothing appearances as index 0 (supine).
     scene, s0, p0 = _tag_clothing_appearances(scene, 0)
     victim_defs = ["CASUALTY"]
+    victim_postures = ["supine"]
     shirt_defs = [s0] if s0 else []
     pants_defs = [p0] if p0 else []
 
     for idx, (vx, vy) in enumerate(EXTRA_CASUALTIES[scene_key], 1):
         vkey = ("A", "B", "C")[(idx + ord(scene_key)) % 3]
-        elements = RescueElements(dict(key=vkey, seed=500 + idx * 17 + ord(scene_key), goal=[vx, vy]),
-                                  lambda x, y: height_at(meta, x, y))
-        elements.casualty()
-        node = elements.nodes[0]
+        posture = NON_SUPINE_POSTURES[(idx - 1) % len(NON_SUPINE_POSTURES)] if multi_posture else "supine"
         def_name = f"TRAIN_VICTIM_{idx}"
-        node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
-        node = node.replace('name "casualty"', f'name "train_victim_{idx}"', 1)
-        node, s_def, p_def = _tag_clothing_appearances(node, idx)
+        s_def = f"SHIRT_APP_{idx}"
+        p_def = f"PANTS_APP_{idx}"
+        if multi_posture:
+            node = build_posture_casualty_vrml(
+                def_name, f"train_victim_{idx}_{posture}",
+                [vx, vy], 0.3 * idx, lambda x, y: height_at(meta, x, y),
+                posture=posture, mesh_key=vkey,
+                shirt_def=s_def, pants_def=p_def,
+            )
+        else:
+            elements = RescueElements(dict(key=vkey, seed=500 + idx * 17 + ord(scene_key), goal=[vx, vy]),
+                                      lambda x, y: height_at(meta, x, y))
+            elements.casualty()
+            node = elements.nodes[0]
+            node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
+            node = node.replace('name "casualty"', f'name "train_victim_{idx}"', 1)
+            node, s_def, p_def = _tag_clothing_appearances(node, idx)
         scene += "\n" + node
         victim_defs.append(def_name)
+        victim_postures.append(posture)
         if s_def:
             shirt_defs.append(s_def)
         if p_def:
@@ -129,7 +143,7 @@ DEF YOLO_COLLECTOR Robot {
 '''
     scene += "\n" + collector_node
     world_path.write_text(scene, encoding="utf-8")
-    return victim_defs, shirt_defs, pants_defs
+    return victim_defs, victim_postures, shirt_defs, pants_defs
 
 
 def add_grayscale_train_copies(dataset_dir, pos_count=55, neg_count=20, seed=71):
@@ -149,6 +163,37 @@ def add_grayscale_train_copies(dataset_dir, pos_count=55, neg_count=20, seed=71)
         gray = cv2.cvtColor(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
         dst_stem = f"{src.stem}_gray"
         cv2.imwrite(str(img_dir / f"{dst_stem}.jpg"), gray, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+        src_lbl = lbl_dir / f"{src.stem}.txt"
+        if src_lbl.is_file():
+            shutil.copy2(src_lbl, lbl_dir / f"{dst_stem}.txt")
+        added += 1
+    return added
+
+
+def add_fog_train_copies(dataset_dir, pos_count=90, neg_count=30, seed=108):
+    """Add Koschmieder atmospheric haze/fog copies to train/ (Scenes A+B only) for weather-degraded robustness."""
+    rng = random.Random(seed)
+    img_dir = dataset_dir / "images/train"
+    lbl_dir = dataset_dir / "labels/train"
+    pos_imgs = sorted(p for p in img_dir.glob("*_pos_*.jpg") if "_gray" not in p.stem and "_fog" not in p.stem)
+    neg_imgs = sorted(p for p in img_dir.glob("*_neg_*.jpg") if "_gray" not in p.stem and "_fog" not in p.stem)
+    rng.shuffle(pos_imgs)
+    rng.shuffle(neg_imgs)
+    added = 0
+    for src in pos_imgs[:pos_count] + neg_imgs[:neg_count]:
+        bgr = cv2.imread(str(src))
+        if bgr is None:
+            continue
+        t = rng.uniform(0.36, 0.66)
+        base_veil = rng.uniform(135.0, 192.0)
+        veil = np.array([
+            base_veil + rng.uniform(-6.0, 8.0),
+            base_veil + rng.uniform(-5.0, 6.0),
+            base_veil + rng.uniform(-6.0, 6.0),
+        ], dtype=np.float32).reshape(1, 1, 3)
+        fogged = np.clip(bgr.astype(np.float32) * t + veil * (1.0 - t), 0.0, 255.0).astype(np.uint8)
+        dst_stem = f"{src.stem}_fog"
+        cv2.imwrite(str(img_dir / f"{dst_stem}.jpg"), fogged, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
         src_lbl = lbl_dir / f"{src.stem}.txt"
         if src_lbl.is_file():
             shutil.copy2(src_lbl, lbl_dir / f"{dst_stem}.txt")
@@ -196,7 +241,7 @@ def draw_label_preview(dataset_dir):
     cv2.imwrite(str(dataset_dir / "preview_labels.jpg"), sheet, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
 
 
-def collect(out_dir, scale=1.0, port=18590):
+def collect(out_dir, scale=1.0, port=18590, multi_posture=False):
     dataset_dir = Path(out_dir)
     if not dataset_dir.is_absolute():
         dataset_dir = ROOT / dataset_dir
@@ -225,13 +270,17 @@ def collect(out_dir, scale=1.0, port=18590):
         val_scenes=["C"],
         randomized_victim_positions=True,
         randomized_clothing_palette=16,
+        multi_posture=bool(multi_posture),
+        postures=list(ALL_POSTURES) if multi_posture else ["supine"],
         per_scene={},
     )
 
     for idx, (scene_key, split, uav_pos, uav_neg, rov_pos, rov_neg, seed) in enumerate(plan):
         world_path = ROOT / "worlds" / f"_tmp_yolo_collect_{scene_key}.wbt"
         wbproj_path = ROOT / "worlds" / f"._tmp_yolo_collect_{scene_key}.wbproj"
-        victim_defs, shirt_defs, pants_defs = build_collector_world(world_path, scene_key)
+        victim_defs, victim_postures, shirt_defs, pants_defs = build_collector_world(
+            world_path, scene_key, multi_posture=multi_posture
+        )
         report_path = dataset_dir / f"report_{scene_key}.json"
         spec_path = dataset_dir / f"spec_{scene_key}.json"
         spec = dict(
@@ -239,6 +288,7 @@ def collect(out_dir, scale=1.0, port=18590):
             prefix=f"scene{scene_key}",
             seed=seed,
             victim_defs=victim_defs,
+            victim_postures=victim_postures,
             shirt_app_defs=shirt_defs,
             pants_app_defs=pants_defs,
             refresh_every=4,
@@ -273,6 +323,9 @@ def collect(out_dir, scale=1.0, port=18590):
     gray_added = add_grayscale_train_copies(dataset_dir, pos_count=int(round(55 * scale)), neg_count=int(round(20 * scale)))
     manifest["grayscale_train_copies"] = gray_added
     print(f"[Collect] Added {gray_added} pure-grayscale training copies for color-agnostic learning.", flush=True)
+    fog_added = add_fog_train_copies(dataset_dir, pos_count=int(round(75 * scale)), neg_count=int(round(25 * scale)))
+    manifest["fog_train_copies"] = fog_added
+    print(f"[Collect] Added {fog_added} Koschmieder atmospheric-haze training copies for fog robustness.", flush=True)
 
     yaml_text = (
         f"path: {dataset_dir.as_posix()}\n"
@@ -293,8 +346,10 @@ def main():
     parser.add_argument("--out", default="runs/yolo_victim_dataset_v2")
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--port", type=int, default=18590)
+    parser.add_argument("--multi-posture", action="store_true",
+                        help="Include all 6 disaster postures (supine/prone/side/curled/seated/half_buried).")
     args = parser.parse_args()
-    collect(args.out, scale=args.scale, port=args.port)
+    collect(args.out, scale=args.scale, port=args.port, multi_posture=args.multi_posture)
 
 
 if __name__ == "__main__":

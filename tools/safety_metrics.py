@@ -79,6 +79,8 @@ def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30,
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         injected_obstacles = summary.get("injected_obstacles", [])
     for ob in injected_obstacles or []:
+        if ob.get("xy_end_enu_m") is not None:
+            continue  # Moving obstacle handled via time-synchronized dynamic_obstacles.csv below.
         oxy = ob.get("xy_enu_m") or ob.get("xy_m")
         osz = ob.get("size_m") or [0.5, 0.5, 0.5]
         if oxy is not None:
@@ -102,8 +104,19 @@ def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30,
         p05_margin = round(float(np.quantile(margins, 0.05)), 4)
         mean_margin = round(float(np.mean(margins)), 4)
 
+    dyn_csv = run_dir / "evaluation/dynamic_obstacles.csv"
+    min_dyn_margin = None
+    if dyn_csv.is_file():
+        with dyn_csv.open("r", encoding="utf-8") as df:
+            drows = [float(r["clearance_m"]) for r in csv.DictReader(df)]
+        if drows:
+            min_dyn_margin = round(float(min(drows)), 4)
+            if min_margin is None or min_dyn_margin < min_margin:
+                min_margin = min_dyn_margin
+
     return dict(
         min_safety_margin_m=min_margin,
+        min_dynamic_margin_m=min_dyn_margin,
         p05_safety_margin_m=p05_margin,
         mean_safety_margin_m=mean_margin,
         j_avoid_integral=round(j_avoid, 3),

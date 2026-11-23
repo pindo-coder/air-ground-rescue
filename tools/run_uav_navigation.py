@@ -67,6 +67,18 @@ OBSTACLE_PRESETS = {
             "color_rgb": [0.58, 0.26, 0.20],
         }
     ],
+    ("full", "dynamic"): [
+        {
+            "name": "dynamic_crossing_hazard",
+            "kind": "dynamic_crossing",
+            "xy_enu_m": [-5.2, -18.2],
+            "xy_end_enu_m": [-5.2, -15.0],
+            "speed_mps": 0.25,
+            "size_m": [0.56, 0.56, 0.54],
+            "yaw_rad": 0.0,
+            "color_rgb": [0.92, 0.42, 0.08],
+        }
+    ],
 }
 
 
@@ -436,7 +448,7 @@ def main():
                         help="Global planner: baseline 2D terrain A* or VCTP + IGHA* heading-aware search.")
     parser.add_argument("--refinement-strategy", choices=("density", "route_value"), default=None,
                         help="Oblique patch selector when running fresh aerial survey.")
-    parser.add_argument("--obstacle", choices=("none", "detour", "block"), default="none")
+    parser.add_argument("--obstacle", choices=("none", "detour", "block", "dynamic"), default="none")
     parser.add_argument("--obstacle-xy", nargs=2, type=float, default=None, metavar=("X", "Y"))
     parser.add_argument("--obstacle-size", nargs=3, type=float, default=None, metavar=("SX", "SY", "SZ"))
     parser.add_argument("--map-from", default=None, help="Optional prior run directory to reuse uav_map.npz.")
