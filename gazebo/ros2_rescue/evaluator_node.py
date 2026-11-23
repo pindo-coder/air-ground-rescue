@@ -18,12 +18,13 @@ import threading
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-for rel in ("evaluation", "gazebo/ros2_rescue", "controllers/uav_mapper"):
+for rel in ("evaluation", "gazebo/ros2_rescue", "controllers/uav_mapper", "tools"):
     p = str(ROOT / rel)
     if p not in sys.path:
         sys.path.insert(0, p)
 
 from metrics import height_at
+from safety_metrics import compute_run_safety_smoothness, trajectory_velocity_xy
 from search_metrics import match_reports, physical_delivery_ok
 from sensor_adapters import quat_xyzw_to_rpy, rpy_to_quat_xyzw
 
@@ -151,6 +152,13 @@ def _is_obstacle_contact(first, second):
     return bool(other and "terrain" not in other)
 
 
+def _nearest_time_indices(sample_times, query_times):
+    right = np.searchsorted(sample_times, query_times).clip(0, len(sample_times) - 1)
+    left = np.maximum(right - 1, 0)
+    earlier = np.abs(sample_times[left] - query_times) <= np.abs(sample_times[right] - query_times)
+    return np.where(earlier, left, right)
+
+
 def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_path=None,
                          trajectory_rows=None, collisions=0, chassis_contacts=0,
                          spawned_obstacles=None, target_deliveries=2):
@@ -159,6 +167,8 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
     eval_dir = folder / "evaluation"
     eval_dir.mkdir(parents=True, exist_ok=True)
     rows = trajectory_rows or []
+    time_samples = np.array([row["time_s"] for row in rows], dtype=float)
+    truth_xy = np.array([[row["x"], row["y"]] for row in rows], dtype=float).reshape(-1, 2)
 
     path_length = 0.0
     max_roll_deg = 0.0
@@ -169,21 +179,26 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
         max_roll_deg = max(max_roll_deg, abs(cur.get("roll_deg", 0.0)))
         max_pitch_deg = max(max_pitch_deg, abs(cur.get("pitch_deg", 0.0)))
 
-    # Compute rover localization error against rover/telemetry.jsonl if available.
+    # Align rover estimates and independent truth on the simulation clock.
     loc_errors = []
+    loc_by_row = [""] * len(rows)
     telem_path = folder / "rover/telemetry.jsonl"
     if telem_path.is_file() and rows:
-        truth_times = np.array([r["time_s"] for r in rows], dtype=float)
-        truth_xy = np.array([[r["x"], r["y"]] for r in rows], dtype=float)
-        for line in telem_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            rec = json.loads(line)
-            t = float(rec["time_s"])
-            idx = int(np.argmin(np.abs(truth_times - t)))
-            if abs(truth_times[idx] - t) <= 0.25:
-                est = np.asarray(rec["pose_xy"], dtype=float)
-                loc_errors.append(float(np.linalg.norm(est - truth_xy[idx])))
+        with telem_path.open(encoding="utf-8") as file:
+            telemetry = [json.loads(line) for line in file if line.strip()]
+        if telemetry:
+            telemetry.sort(key=lambda sample: float(sample["time_s"]))
+            estimate_times = np.array([sample["time_s"] for sample in telemetry], dtype=float)
+            estimate_xy = np.array([sample["pose_xy"] for sample in telemetry], dtype=float)
+            nearest_truth = _nearest_time_indices(time_samples, estimate_times)
+            matched_estimates = np.abs(time_samples[nearest_truth] - estimate_times) <= 0.25
+            matched_truth_xy = truth_xy[nearest_truth[matched_estimates]]
+            loc_errors = np.linalg.norm(estimate_xy[matched_estimates] - matched_truth_xy, axis=1).tolist()
+            nearest_estimate = _nearest_time_indices(estimate_times, time_samples)
+            matched_rows = np.flatnonzero(np.abs(estimate_times[nearest_estimate] - time_samples) <= 0.25)
+            row_errors = np.linalg.norm(estimate_xy[nearest_estimate[matched_rows]] - truth_xy[matched_rows], axis=1)
+            for index, error in zip(matched_rows, row_errors):
+                loc_by_row[index] = round(float(error), 4)
 
     loc_summary = (
         dict(
@@ -194,6 +209,9 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
         if loc_errors else None
     )
 
+    status_name = "rescue_status.json" if mode == "rescue" else "nav_status.json"
+    status_path = folder / "rover" / status_name
+    rover_status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.is_file() else {}
     if mode == "rescue":
         truth_doc = (
             json.loads(Path(truth_override_path).read_text(encoding="utf-8"))
@@ -201,11 +219,6 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             else terrain
         )
         truth_people = truth_doc.get("victims", truth_doc.get("people", []))
-        rover_status_path = folder / "rover/rescue_status.json"
-        rover_status = (
-            json.loads(rover_status_path.read_text(encoding="utf-8"))
-            if rover_status_path.is_file() else {}
-        )
         events = rover_status.get("events", [])
         reports = [e for e in events if e.get("type") == "report"]
         deliveries = [e for e in events if e.get("type") == "delivery"]
@@ -228,27 +241,47 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
         report_for_victim = {report["victim_id"]: i for i, report in enumerate(reports)}
         delivered_ids = set()
         delivery_checks = []
-        time_samples = np.array([row["time_s"] for row in rows], dtype=float)
+        delivery_records = []
         stationary_s = _stationary_durations(rows)
         for d in deliveries:
             target_index = matched.get(report_for_victim.get(d["victim_id"]))
             check = dict(victim_id=d["victim_id"], time_s=d["time_s"], distance_m=None,
                          stationary_s=None, valid=False)
             delivery_checks.append(check)
-            if target_index is None or target_index in delivered_ids or not rows:
-                continue
+            record = dict(track_id=d["victim_id"], true_distance_m=None, valid=False,
+                          actual_drop_xy=d.get("rover_xy_m"))
+            delivery_records.append(record)
             delivery_time = float(d["time_s"])
             sample_index = int(np.searchsorted(time_samples, delivery_time, side="right")) - 1
             if sample_index < 0 or delivery_time - time_samples[sample_index] > 0.25:
                 continue
             row = rows[sample_index]
+            if record["actual_drop_xy"] is None:
+                record["actual_drop_xy"] = [row["x"], row["y"]]
+            if target_index is None or target_index in delivered_ids:
+                continue
             distance = math.dist((row["x"], row["y"]), targets[target_index]["xy"])
             cargo = int(target_deliveries) - len(delivered_ids)
             stopped_time = round(float(stationary_s[sample_index]), 3)
             valid = physical_delivery_ok(True, stopped_time, distance, cargo, delivery_tol)
             check.update(distance_m=round(distance, 4), stationary_s=stopped_time, valid=valid)
+            record.update(true_distance_m=check["distance_m"], valid=valid)
             if valid:
                 delivered_ids.add(target_index)
+
+        victims_path = folder / "aerial_victims.json"
+        candidates = []
+        if victims_path.is_file():
+            candidates = json.loads(victims_path.read_text(encoding="utf-8")).get("candidates", [])
+        aerial_audit = []
+        if targets:
+            for candidate in candidates:
+                distances = [math.dist(candidate["mean_enu_m"], target["xy"]) for target in targets]
+                nearest = int(np.argmin(distances))
+                aerial_audit.append(dict(
+                    candidate_id=candidate["id"], nearest_truth_victim_id=truth_people[nearest].get("id"),
+                    error_m=round(distances[nearest], 4), views=candidate.get("views"),
+                ))
 
         valid_deliveries = len(delivered_ids)
         cross_view_valid = sum(formatted_reports[i]["cross_view"] for i in matched)
@@ -270,11 +303,15 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             rover_status=rover_status_code,
             mission_success=mission_success,
             target_deliveries=int(target_deliveries),
+            aerial_candidates_total=len(candidates),
+            aerial_candidates_audit=aerial_audit,
             total_reports=len(reports),
             effective_reports=len(matched),
+            false_reports=len(reports) - len(matched),
             valid_cross_view_reports=cross_view_valid,
             delivered_people=valid_deliveries,
             delivery_checks=delivery_checks,
+            deliveries=delivery_records,
             localization_rmse_m=round(float(rmse), 4) if rmse is not None and math.isfinite(rmse) else None,
             collisions=int(collisions),
             chassis_contacts=int(chassis_contacts),
@@ -290,21 +327,16 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             encoding="utf-8",
         )
     else:
-        nav_status_path = folder / "rover/nav_status.json"
-        nav_status = (
-            json.loads(nav_status_path.read_text(encoding="utf-8"))
-            if nav_status_path.is_file() else {}
-        )
-        goal_xy = nav_status.get("goal_xy_m")
+        goal_xy = rover_status.get("goal_xy_m")
         final_err = None
         if goal_xy is not None and rows:
             final_err = float(math.hypot(rows[-1]["x"] - goal_xy[0], rows[-1]["y"] - goal_xy[1]))
         summary = dict(
             simulator="gazebo_harmonic_ros2",
             mode="navigation",
-            status=nav_status.get("status", "UNKNOWN"),
-            reason=nav_status.get("reason", ""),
-            goal_id=nav_status.get("goal_id"),
+            status=rover_status.get("status", "UNKNOWN"),
+            reason=rover_status.get("reason", ""),
+            goal_id=rover_status.get("goal_id"),
             goal_xy_m=goal_xy,
             final_goal_error_m=round(final_err, 4) if final_err is not None else None,
             collisions=int(collisions),
@@ -312,16 +344,33 @@ def evaluate_run_offline(run_dir, terrain, mode="navigation", truth_override_pat
             path_length_m=round(float(path_length), 3),
             max_abs_roll_deg=round(float(max_roll_deg), 2),
             max_abs_pitch_deg=round(float(max_pitch_deg), 2),
-            replan_count=int(nav_status.get("replan_count", 0)),
+            replan_count=int(rover_status.get("replan_count", 0)),
             injected_obstacles=spawned_obstacles or [],
             rover_pose_error_m=loc_summary,
         )
 
+    summary.update({field: rover_status.get(field) for field in ("planner", "detector", "local_policy")})
+    start_s = rover_status.get("drive_start_s", rows[0]["time_s"] if rows else None)
+    end_s = rover_status.get("end_time_s", rows[-1]["time_s"] if rows else None)
+    if start_s is not None and end_s is not None:
+        duration_field = "total_rescue_duration_s" if mode == "rescue" else "travel_duration_s"
+        summary[duration_field] = round(max(0.0, float(end_s) - float(start_s)), 3)
+
+    safety = {}
     if rows:
+        speeds = np.linalg.norm(trajectory_velocity_xy(time_samples, truth_xy), axis=1)
+        csv_rows = [dict(row, speed_mps=round(float(speed), 4), loc_error_m=error,
+                         yaw_rad=row.get("yaw_rad", 0.0), roll_deg=row.get("roll_deg", 0.0),
+                         pitch_deg=row.get("pitch_deg", 0.0))
+                    for row, speed, error in zip(rows, speeds, loc_by_row)]
         with (eval_dir / "trajectory.csv").open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer = csv.DictWriter(f, fieldnames=list(csv_rows[0]))
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(csv_rows)
+        safety = compute_run_safety_smoothness(folder, injected_obstacles=summary["injected_obstacles"])
+    summary["safety_smoothness"] = safety
+    for field in ("min_safety_margin_m", "j_avoid_integral", "rms_jerk_mps3"):
+        summary[field] = safety.get(field)
 
     (eval_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"

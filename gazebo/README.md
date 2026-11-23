@@ -1,12 +1,14 @@
 # Gazebo Harmonic + ROS 2 Jazzy · D 山洪森林场景完整迁移说明
 
-本分支已将 Webots `main`（至 `2721e96`）上的**全部核心算法、工业级四轮车/无人机外观与 6 张 PBR 贴图、微调航拍 YOLO11n v2 权重、全部回归测试**完整同步，并完成了面向 **Gazebo Sim Harmonic（8.15.0）+ ROS 2 Jazzy（`ros_gz_bridge`）** 的端到端适配：
+本分支已同步 Webots `main` 至 `8fa1611`，面向 **Gazebo Sim Harmonic（8.15.0）+ ROS 2 Jazzy（`ros_gz_bridge`）** 提供以下能力。
 
 - **四轮滑移转向底盘（4WD）**：完整导出 `RescueRoverBody` + 4 个 `RescueRoverWheel`（轴距 `0.300 m`、轮距 `0.410 m`、轮径 `0.090 m`、底盘离地 `0.090 m`），与 VCTP 四轮精细几何 100% 一致。
 - **全量传感器补齐**：
   - 地面车：`/rover/rgb`、`/rover/depth`、`/rover/chase_cam`、`/rover/lidar`（+ `/rover/lidar/points`）、ENU `/rover/imu`、`/rover/gps`（NavSat）、`/rover/odom`、`/rover/joint_states`（4 轮）、`/rover/contact`（评测专用）。
   - 无人机：`/drone/rgb`、`/drone/depth`、`/drone/fpv_cam`、`/drone/gps`（NavSat，光心同位）、ENU `/drone/imu`。
 - **全链路算法栈**：无人机 0.5 m / 0.125 m 粗细建图 → Traversing Mars 双路线搜索 → DUCPP 价值导向斜拍补拍（支持 6-DoF 斜拍站位）→ VCTP + IGHA\* 混合全局规划 → 10 Hz 车载 LiDAR/RGB-D 局部避障 → PyTorch 多模态神经网络局部规划（BC + DAgger）→ 零泄漏 v2 航拍 YOLO11n + 车端复核与物资箱投送。
+
+新版本的 IGHA\* 可在起点姿态未通过 VCTP 时尝试邻近朝向与位置。双仓物资架作为静态外观导出到 SDF。独立评测输出速度、定位误差、安全裕度 `S_margin`、避障平滑度 `J_avoid` 和 RMS 加加速度。
 
 ---
 
@@ -90,4 +92,15 @@ gz sdf -k gazebo/generated/D/search_d.sdf
 - 本地回归测试：
 ```bash
 python3 -m unittest discover -s tests -p 'test_gazebo_*.py' -v
+```
+
+## 五、地形导入与离线大屏
+
+使用 `tools/import_real_dsm.py --dsm <DSM.tif> --output <目录>` 可将 GeoTIFF 地形生成 `uav_map.npz`。该先验可用于 Gazebo 定点导航的 `--map-from`，输入坐标需与运行场景采用同一本地 ENU。救援模式还需要对应的航拍伤员候选。
+
+Gazebo 的 `evaluation/summary.json` 包含 `safety_smoothness`。离线大屏读取轨迹、规划路线、投送核验和局规统计，并可从历史轨迹的位置和时间补算速度。
+
+```bash
+.venv/bin/python tools/rescue_dashboard.py --run "runs/<Gazebo 运行目录>" \
+  --export-static "runs/<Gazebo 运行目录>/dashboard_gazebo.html"
 ```

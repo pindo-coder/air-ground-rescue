@@ -1,5 +1,6 @@
 """Unit tests for Gazebo Harmonic + ROS 2 Jazzy sensor adapters, evaluator helpers, and mission prep."""
 
+import csv
 import importlib.util
 import json
 import math
@@ -146,6 +147,98 @@ class GazeboMissionHelpersTest(unittest.TestCase):
                     self.assertAlmostEqual(check["distance_m"], abs(xs[-1] - 1.0), places=4)
                     if success:
                         self.assertEqual(check["stationary_s"], 2.0)
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY and importlib.util.find_spec("PIL"),
+                         "Gazebo reporting dependencies required")
+    def test_gazebo_rescue_evaluation_feeds_dashboard(self):
+        from evaluator_node import evaluate_run_offline
+        from rescue_dashboard import _load_run_payload, build_html
+
+        terrain = {"victims": [{"id": 8, "xy": [1.1, 2.0]}]}
+        candidate = dict(id=1, mean_enu_m=[1.2, 2.0], views=3)
+        report = dict(type="report", victim_id=1, xy_enu_m=[1.1, 2.0], time_s=1.9, cross_view=True)
+        delivery = dict(type="delivery", victim_id=1, rover_xy_m=[1.0, 2.0], time_s=2.0)
+        status = dict(status="MISSION_SUCCESS", events=[report, delivery], planner="igha_vctp",
+                      detector="yolo", local_policy="neural", drive_start_s=0.0, end_time_s=2.0,
+                      local_policy_stats=dict(policy="neural", decisions=dict(learner=10)))
+        rows = [dict(time_s=i / 10, x=1.0 if i else 0.95, y=2.0, yaw_rad=0.0,
+                     roll_deg=0.0, pitch_deg=0.0) for i in range(21)]
+        with TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            (run / "rover").mkdir()
+            (run / "rover/rescue_status.json").write_text(json.dumps(status), encoding="utf-8")
+            (run / "rover/telemetry.jsonl").write_text(
+                json.dumps(dict(time_s=0.11, pose_xy=[1.0, 2.03])) + "\n", encoding="utf-8",
+            )
+            (run / "aerial_victims.json").write_text(json.dumps(dict(candidates=[candidate])), encoding="utf-8")
+            route = [[0.95, 2.0], [1.0, 2.0]]
+            (run / "route.json").write_text(json.dumps(dict(route_xy_m=route)), encoding="utf-8")
+            obstacles = [dict(xy_enu_m=[1.0, 3.0], size_m=[0.4, 0.4, 0.4])]
+            summary = evaluate_run_offline(run, terrain, mode="rescue", trajectory_rows=rows,
+                                           spawned_obstacles=obstacles, target_deliveries=1)
+            with (run / "evaluation/trajectory.csv").open(encoding="utf-8") as file:
+                trajectory = list(csv.DictReader(file))
+            self.assertEqual([float(row["speed_mps"]) for row in trajectory[:3]], [0.0, 0.5, 0.0])
+            self.assertEqual(float(trajectory[1]["loc_error_m"]), 0.03)
+            self.assertEqual(trajectory[-1]["loc_error_m"], "")
+            self.assertEqual(summary["min_safety_margin_m"], 0.5)
+            self.assertEqual(summary["j_avoid_integral"], summary["safety_smoothness"]["j_avoid_integral"])
+            self.assertEqual(summary["total_rescue_duration_s"], 2.0)
+            self.assertEqual(summary["deliveries"], [dict(track_id=1, true_distance_m=0.1,
+                                                         valid=True, actual_drop_xy=[1.0, 2.0])])
+            self.assertEqual(summary["aerial_candidates_audit"], [dict(candidate_id=1,
+                             nearest_truth_victim_id=8, error_m=0.1, views=3)])
+
+            payload = _load_run_payload(run, include_video_url=False)
+            self.assertEqual(payload["evaluation"]["status"], "MISSION_SUCCESS")
+            self.assertEqual(payload["local_policy"], status["local_policy_stats"])
+            self.assertEqual(payload["routes_history"], [route])
+            self.assertEqual(payload["telemetry"]["loc_err"][1], 0.03)
+            self.assertIn('"nearest_truth_victim_id": 8', build_html(static_payload=payload))
+
+    @unittest.skipUnless(HAS_NUMPY and importlib.util.find_spec("PIL"), "Gazebo reporting dependencies required")
+    def test_legacy_gazebo_trajectory_loads_without_speed_column(self):
+        from rescue_dashboard import _load_run_payload, discover_runs
+        from safety_metrics import compute_run_safety_smoothness
+
+        with TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            (run / "evaluation").mkdir()
+            (run / "rover").mkdir()
+            (run / "rover/nav_status.json").write_text('{"local_policy":"rule"}', encoding="utf-8")
+            header = "time_s,x,y,z,yaw_rad,roll_deg,pitch_deg\n"
+            samples = "".join(f"{i / 10:.1f},{i / 20:.2f},0,0,0,0,0\n" for i in range(6))
+            (run / "evaluation/trajectory.csv").write_text(header + samples, encoding="utf-8")
+
+            metrics = compute_run_safety_smoothness(run)
+            self.assertAlmostEqual(metrics["mean_speed_mps"], 5 * 0.5 / 6, places=4)
+            payload = _load_run_payload(run)
+            self.assertEqual(payload["telemetry"]["v"], [0.0] + [0.5] * 5)
+            self.assertEqual(payload["local_policy"], {})
+            with patch("rescue_dashboard.ROOT", run):
+                self.assertEqual(discover_runs(), [])
+
+    @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY and importlib.util.find_spec("cv2"),
+                         "Gazebo rover dependencies required")
+    def test_gazebo_goal_route_uses_igha_start_recovery(self):
+        import numpy as np
+        from rover_nav_node import plan_goal_route
+        from survey_map import FREE, Grid
+        from vctp import FineTerrainSurface, VctpChecker
+
+        bounds = [[0.0, 0.0], [8.0, 6.0]]
+        coarse, fine = Grid.from_bounds(bounds, 0.5), Grid.from_bounds(bounds, 0.125)
+        states = np.full(coarse.shape, FREE, dtype=np.int8)
+        fine_z = np.zeros(fine.shape)
+        fine_z[fine.cell((2.21, 3.0))] = 0.26
+        vctp = VctpChecker(FineTerrainSurface(fine, fine_z, coarse, states))
+        self.assertEqual(vctp.check_pose(2.0, 3.0, 0.0).status, "FAIL")
+
+        result = plan_goal_route(coarse, states, {"slope_deg": np.zeros(coarse.shape)},
+                                 [2.0, 3.0], [6.0, 3.0], 0.40, False, vctp=vctp)
+        self.assertEqual(result["status"], "PLANNED")
+        self.assertEqual(result["planner"], "igha_vctp")
+        self.assertEqual(result["vctp_audit"]["fail_count"], 0)
 
     @unittest.skipUnless(HAS_NUMPY and HAS_SCIPY, "numpy and scipy required for evaluator")
     def test_evaluator_ignores_parking_platform_and_terrain_contacts(self):

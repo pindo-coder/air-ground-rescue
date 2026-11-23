@@ -71,6 +71,13 @@ class GazeboDExportTest(unittest.TestCase):
 
         # Live viewing cameras (from Webots main 2721e96)
         rover_chassis = world.find("./model[@name='rover']/link[@name='chassis']")
+        crate_size = [0.122, 0.076, 0.032]
+        crate_visuals = [visual for visual in rover_chassis.findall("visual")
+                         if list(map(float, visual.findtext("geometry/box/size", "").split())) == crate_size]
+        self.assertEqual(sorted(float(visual.findtext("pose").split()[1]) for visual in crate_visuals),
+                         [-0.046, 0.046])
+        for collision in rover_chassis.findall("collision"):
+            self.assertNotEqual(list(map(float, collision.findtext("geometry/box/size", "").split())), crate_size)
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chase_cam']/topic"), "/rover/chase_cam")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chassis_contact']/topic"), "/rover/contact")
         self.assertEqual(rover_chassis.findtext("./sensor[@name='chassis_contact']/contact/topic"), "/rover/contact")
