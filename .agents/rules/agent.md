@@ -95,11 +95,12 @@ python -m venv .venv
   - **车载模块化双仓物资精准投放机构（`protos/ResearchRover.proto` + `controllers/uav_survey/uav_survey.py`）**：后甲板加装低剖面 CNC 双仓释放架（高度 ≤ `0.344 m`，零雷达/前视遮挡），满载 2 个带白十字橙色物资箱，每次物理投送时同步卸载对应舱位箱体；
   - **7 组多随机位置 + 全色域随机换装实跑统计**：涵盖标准 D 全程全栈（`224203_1688`，89.1 s 中文 HUD 全程实录 `MISSION_SUCCESS` · 0 碰撞）、双仓机构 100% IGHA\*（`161638_22012`，`MISSION_SUCCESS` · 0 碰撞）、全非蓝衣随机 `seed=17`（`200923_13096`，`MISSION_SUCCESS` · 2/2 投送 · RMSE `0.239 m` · 0 碰撞）、`seed=42`、`seed=7` 及极端不可达 `seed=101/202`（安全拒入 0 碰撞），空中纯 YOLO 总检出 **`21/21 = 100%`**、**`0` 误报**、平均定位误差 **`0.130 ± 0.043 m`**；
   - **安全平滑指标、真机摄影测量接口与中文指挥调度大屏**：`tools/safety_metrics.py`、`tools/import_real_dsm.py`（WebODM/Mini 4 Pro GeoTIFF DSM → `uav_map.npz` + `VCTP+IGHA*` 规划）、`tools/rescue_dashboard.py`（支持本地交互服务与单文件离线 HTML 导出 `runs/援来有路_空地协同指挥调度大屏_离线版.html`），配套单元测试 `tests/search/test_competition_tools.py`。
-- **2026-11-23 极端灾后工况、多姿态抗遮挡与行进中无人机实时补拍闭环（全仓库 84/84 单元测试通过）**：
+- **2026-11-23 极端灾后工况、多姿态抗遮挡、行进中无人机实时补拍与车载三仓 3/3 全员零碰撞闭环（全仓库 86/86 单元测试通过）**：
   - **动态障碍物主动避让三组同条件对比（`--obstacle dynamic`，`runs/local_learning_D_full/compare_full_dynamic/comparison.json`，`held_out=true`）**：在 `OnboardObstacleMap` 加入近场 `0.45–2.6 m` 自由空间 1.8 s 动态残影衰减清除；河谷走廊部署 `0.25 m/s` 横向穿越移动障碍后，**规则专家（1 碰撞 `-6.4 cm` 失败）**与**纯 BC（1 碰撞 `-7.8 cm` 失败）**双双撞击停摆，**唯有 `BC + DAgger` 以最小 `+57.5 cm` 动态安全裕度、0 碰撞、P95 推理 `0.995 ms`（<1 ms）、`95.5%` 神经直控安全到达终点（`158.7 s`，误差 `0.285 m`）**；
   - **Webots 真实天气视觉退化测试（`tools/run_uav_rescue.py --weather {clear,lowlight,fog}`）**：在真实 Webots 渲染下注入黄昏低照度（光强 -80%，`20261123_170102_8096`）与山谷 38 m 浓雾（`20261123_171203_25240`），空中检出均保持 **`3/3 = 100%`、`0` 误报**，车载抵近复核置信度达 **`0.853` / `0.897`**（融合 RMSE **`0.220 m` / `0.184 m`**）；
   - **v3 零泄漏六姿态 + 废墟半掩埋 + 全天候抗雾航拍 YOLO11n（`tools/posture_casualty.py`、`tools/collect_yolo_dataset.py --multi-posture`、`models/yolo11n_victim.pt`）**：针对仅仰卧训练的 v2 在留出 D 场景 5 类非仰卧姿态（`俯卧 / 侧卧 / 蜷缩成团 / 抱膝坐姿 / 废墟半掩埋`，`randv53`）空中召回率跌至 `3/5 (60%)`（漏检蜷缩成团与废墟半掩埋）的短板，仅在 **A+B 场景**采集 6 种真实灾后姿态 + 瓦砾半掩埋 + 16 色换装 + 纯灰度 + Koschmieder 大气散射雾化样本（**784 训练图**，C 场景 **175 验证图** `mAP@50 = 0.830` / `Precision = 0.859`，**D 场景 100% 严格留出**），热启动微调并加入 `erasing=0.20` 随机擦除增强。留出 D 场景 **7 项全工况同条件对照（`runs/cn_figures_20261121/v3_posture_benchmark.json`）全部达到 `100%` 召回与 `0` 误报（合计 `23/23`、1,092 航拍帧零误报）**：**5 类非仰卧姿态由 `3/5 (60%)` 跃升至 `5/5 (100%)`（RMSE `0.213 m`，其中原漏检的蜷缩成团 7 视角 `0.69`、废墟半掩埋 7 视角 `0.72`）**，且标准仰卧（`3/3`, `0.121 m`）、`Hue+60°`（`3/3`, `0.116 m`）、纯灰度（`3/3`, `0.110 m`）、黄昏低照度（`3/3`, `0.160 m`）、38 m 浓雾（`3/3`, `0.185 m`）与随机全非蓝衣 `seed=17`（`3/3`, `0.182 m`）**全部零退化**；
-  - **行进中车端事件触发无人机实时动态补拍闭环（`--dynamic-refinement`，`survey_refinement.py`、`uav_mapper.py`、`uav_survey.py`、`route_tracker.py`、`uav_map_rover.py`、`local_policy.py`）**：将 DUCPP 从“航测前单轮补拍”升级为**事件触发 + 空地异步解耦 + 局部增量刷新**闭环：平时待机关闭无人机 RGB-D 零开销；仅在车端遇塌方封堵无确认绕行路、大幅绕路或受困卡口时安全停稳并呼叫无人机飞抵对应 `UNKNOWN` 走廊执行 12 帧实时斜拍与多轮地面平面迭代传播（`refine_ground_iterative`），在 100% 保留车载已检障碍的前提下增量解锁安全新通道（若确为密林不可通则诚实保持 `STOPPED_SAFE`）。Webots D 全场双段塌方封堵同条件实跑（`--obstacle canopy_block` + `BC+DAgger` 神经局规）：**无补拍基线（`20261123_195042_23452`）`45` 次重规划后 `TIMEOUT`（距终点 `3.67 m`）**；**接通实时动态补拍（`20261123_195039_32280`）仅触发 `1` 次无人机补拍（`12` 帧斜拍、`31.2 s` 异步飞行）即解锁 `23` 格林下新通道，直接重规划穿过新路实现 `ARRIVED · 0 碰撞`（终点误差 `0.282 m`，神经直控占比 `96.5%`），且车端 10 Hz 神经网络中位推理耗时保持 `0.743 ms`（对比优化前 `0.736 ms`，几乎零算力拖慢）**。
+  - **行进中车端事件触发无人机实时动态补拍闭环（`--dynamic-refinement`，`survey_refinement.py`、`uav_mapper.py`、`uav_survey.py`、`route_tracker.py`、`uav_map_rover.py`、`local_policy.py`）**：将 DUCPP 从“航测前单轮补拍”升级为**事件触发 + 空地异步解耦 + 局部增量刷新**闭环：平时待机关闭无人机 RGB-D 零开销；仅在车端遇塌方封堵无确认绕行路、大幅绕路或受困卡口时安全停稳并呼叫无人机飞抵对应 `UNKNOWN` 走廊执行 12 帧实时斜拍与多轮地面平面迭代传播（`refine_ground_iterative`），在 100% 保留车载已检障碍的前提下增量解锁安全新通道（若确为密林不可通则诚实保持 `STOPPED_SAFE`）。Webots D 全场双段塌方封堵同条件实跑（`--obstacle canopy_block` + `BC+DAgger` 神经局规）：**无补拍基线（`20261123_195042_23452`）`45` 次重规划后 `TIMEOUT`（距终点 `3.67 m`）**；**接通实时动态补拍（`20261123_195039_32280`）仅触发 `1` 次无人机补拍（`12` 帧斜拍、`31.2 s` 异步飞行）即解锁 `23` 格林下新通道，直接重规划穿过新路实现 `ARRIVED · 0 碰撞`（终点误差 `0.282 m`，神经直控占比 `96.5%`），且车端 10 Hz 神经网络中位推理耗时保持 `0.743 ms`（对比优化前 `0.736 ms`，几乎零算力拖慢）**；
+  - **车载模块化三仓精准投放机构 + 伤员防碾压禁区 + 全员 3/3 零碰撞闭环（`protos/ResearchRover.proto`、`config/search/common.json`、`rescue_mission.py`、`route_tracker.py`、`uav_map_rover.py`、`tools/run_uav_rescue.py`）**：针对“无人机检出 3 名伤员而小车仅能装载 2 箱”的运力瓶颈，将后甲板模块化投放架由双仓升级为 **并排三仓（`cargo1Scale/cargo2Scale/cargo3Scale`，`cargo_capacity = 3`，宽 `0.244 m`、高 `≤ 0.344 m`，零传感器遮挡）**，默认 `--max-victims 3`；并在全局选点与车载细图同步加入 **伤员本体防碾压避让禁区（`0.60 m` 粗图屏蔽 + 就近侧停靠点优选 + 投送后 `0.68 m` 永久保护区）**、**先验实体障碍独立净空（`blocked_margin_m = 0.36 m`）**与 **大航向偏差（`> 60°`）原地对准护栏**。Webots D 全新航飞随机位置 + 全非蓝衣换装全栈实跑（`uav_rescue_D_full_yolo_igha_vctp_clear_randv2_20261123_214105_35788`，`v3 YOLO + VCTP/IGHA* + 神经 DAgger`）：**`MISSION_SUCCESS` · `all_targets_delivered = true` · 空中纯 YOLO 检出 `3/3`（0 误报）· 车载跨视角复核 `3/3`（0.677 / 0.759 / 0.710）· 一次出动有效投送 `3/3`（`3→2→1→0` 逐仓卸载，距离 `1.26 / 1.66 / 1.68 m`）· `0` 碰撞 · `0` 车体接触 · RMSE `0.255 m` · 神经直控 `93.9%`（中位 `0.759 ms` / P95 `1.239 ms`）**，同步导出 1 倍速实时中文 HUD 实录视频 `runs/援来有路_三仓满载全员3人搜救实录_1倍速实时版.mp4`（`4200` 帧、`10 fps`、`420.0 s`）。
 
 ---
 
@@ -153,7 +154,7 @@ python -m venv .venv
 ## 八、全量启动命令速查
 
 ```powershell
-# 1. 全量单元测试回归（当前 77/77 全通过）
+# 1. 全量单元测试回归（当前 86/86 全通过）
 .venv\Scripts\python.exe -m unittest discover -s tests
 
 # 2. 无人机航测与 DUCPP 补拍基线
@@ -165,12 +166,10 @@ python -m venv .venv
 .venv\Scripts\python.exe tools/run_uav_navigation.py --profile full --goal valley --obstacle detour --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
 .venv\Scripts\python.exe tools/run_uav_navigation.py --profile local --obstacle block
 
-# 4. 纯 YOLO 空地协同双伤员救援投送（默认 --detector yolo，可加 --visible --realtime --keep-open 或 --record-video）
-.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --max-victims 2 --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
-# 随机刷新伤员位置与随机服装颜色（需全新无人机重飞，可加 --nadir-only 加速）：
-.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --nadir-only --detector yolo --planner igha_vctp --max-victims 2 --victim-seed 42 --random-clothing
-# 终极全栈合体（纯 v2 YOLO + VCTP/IGHA* + 神经网络 DAgger 局部规划）：
-.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --local-policy neural --checkpoint models/local_policy_dagger.pt --max-victims 2 --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
+# 4. 纯 YOLO 空地协同三仓全员 3/3 救援投送（默认 --detector yolo --max-victims 3，可加 --visible --realtime --keep-open 或 --record-video --video-speed 1.0）
+.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --nadir-only --detector yolo --planner igha_vctp --max-victims 3 --victim-seed 2 --random-clothing --local-policy neural --checkpoint models/local_policy_dagger.pt --record-video --video-speed 1.0 --timeout 480
+# 开启行进中车端触发无人机实时动态补拍（--dynamic-refinement）：
+.venv\Scripts\python.exe tools/run_uav_navigation.py --profile full --goal valley --planner igha_vctp --obstacle canopy_block --local-policy neural --checkpoint models/local_policy_dagger.pt --dynamic-refinement --map-from runs/uav_mapping_D_full_route_value_20261121_133722_31008
 
 # 5. 零泄漏多色随机位置 YOLO 数据采集、微调与留出 D 场景三重压力评测
 .venv\Scripts\python.exe tools/collect_yolo_dataset.py --out runs/yolo_victim_dataset_v2
@@ -215,4 +214,5 @@ python -m venv .venv
 | **随机位置 + 随机换装全新重飞实测** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_randv42_20261121_190007_11920/evaluation/rescue_preview.png`、`rover/victim_03_confirm.jpg` | 实时航飞检出 3/3 酒红/绯红随机伤员（0 误报，误差 `0.08–0.14 m`）；车行 `111.68 m` 0 碰撞，完成酒红伤员跨视角确认与 `1.42 m` 投送 |
 | 720p 跟车仿真视频（带实时小地图） | `runs/uav_rescue_D_full_surrogate_rgbd_igha_vctp_clear_20261121_145756_27572/evaluation/rescue_simulation.mp4`、`video_keyframes.jpg` | 55.9 s (4× 速, 1118 帧, H.264, 82 MB)，`MISSION_SUCCESS` |
 | **终极全栈合体搜救（纯 YOLO + VCTP/IGHA\* + 神经 DAgger）** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_205200_21688/evaluation/rescue_preview.png`、`summary.json` | **`MISSION_SUCCESS`**，95.1% 神经网络控制（1.07 ms）、69.26 m 0 碰撞、2/2 跨视角确认、2/2 投送（1.59/1.49 m）、RMSE `0.372 m` |
-| D 全场神经网络局规训练与三组留出对比 | `runs/local_learning_D_full/compare_full_detour_v2/comparison.json`、`models/local_policy_bc.pt`、`models/local_policy_dagger.pt` | BC `ARRIVED` 0 碰（0.274 m 误差，97.4% 神经）；DAgger 0 碰最低回退 `1.56%` / 最少重规划 `5` 次 |
+| **三仓满载全员 3/3 零碰撞搜救（v3 YOLO + VCTP/IGHA\* + 神经 DAgger + 1× 实录）** | `runs/uav_rescue_D_full_yolo_igha_vctp_clear_randv2_20261123_214105_35788/`、`runs/援来有路_三仓满载全员3人搜救实录_1倍速实时版.mp4` | **`MISSION_SUCCESS`**，`all_targets_delivered=true`，3/3 空中检出、3/3 跨视角复核、**3/3 有效投送（`3→2→1→0`）**、**0 碰撞 · 0 车体接触**、RMSE `0.255 m`、神经直控 `93.9%`（`0.759 ms`） |
+| D 全场神经网络局规训练与三组留出对比 | `runs/local_learning_D_full/compare_full_detour_v4/comparison.json`、`models/local_policy_bc.pt`、`models/local_policy_dagger.pt` | BC `ARRIVED` 0 碰（0.274 m 误差，97.4% 神经）；DAgger 0 碰最低回退 `1.46%` / 最少重规划 `5` 次 / 动态穿越障碍唯一 0 碰撞到达 |

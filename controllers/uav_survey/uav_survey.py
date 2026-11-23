@@ -377,7 +377,7 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
     return summary
 
 
-def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_obstacles):
+def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_obstacles, drone=None):
     """Independent ground-truth evaluator for air-to-ground victim rescue & supply delivery."""
     eval_dir = folder / "evaluation"
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -448,6 +448,10 @@ def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_ob
             vp_ori.setSFRotation(look_at_rotation(cam_eye.tolist(), cam_target.tolist()))
         print(f"[Rescue Eval] Capturing follow-camera frames -> {video_frames_dir}", flush=True)
 
+    drone_trans = drone.getField("translation") if drone is not None else None
+    drone_rot = drone.getField("rotation") if drone is not None else None
+    dyn_drone_state = {"request_id": 0, "schedule": None, "mtime": None}
+
     with (eval_dir / "trajectory.csv").open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow([
@@ -458,6 +462,8 @@ def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_ob
 
         while simulation.step(period_ms) != -1:
             now = simulation.getTime()
+            if _step_dynamic_drone(folder, drone_trans, drone_rot, now, dyn_drone_state):
+                deadline_s += dt
             pos = rover.getPosition()
             vel = rover.getVelocity()
             orient = rover.getOrientation()
@@ -750,6 +756,7 @@ def _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_ob
         drop_detection_frames=rover_status.get("drop_detection_frames", 0),
         failure_reason=failure_reason,
         rover_legs=rover_status.get("legs", []),
+        dynamic_refinement=rover_status.get("dynamic_refinement"),
         injected_obstacles=spawned_obstacles,
         rover_pose_error_m=(dict(
             median=round(float(np.median(loc_errors)), 4),
@@ -832,7 +839,7 @@ def main():
                 simulation.simulationQuit(0)
                 break
             if os.environ.get("UAV_RESCUE_MODE") == "1":
-                _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_obstacles)
+                _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_obstacles, drone=drone)
             else:
                 _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawned_obstacles, drone=drone)
             if os.environ.get("UAV_NAV_KEEP_OPEN") != "1":

@@ -357,7 +357,8 @@ class OnboardObstacleMap:
     """
 
     def __init__(self, grid, prior_states, ground_z_m, planning_cost, rover_radius_m,
-                 confirm_frames=2, subdiv=4, prior_margin_m=0.25, obstacle_margin_m=0.33):
+                 confirm_frames=2, subdiv=4, prior_margin_m=0.25, obstacle_margin_m=0.33,
+                 blocked_margin_m=0.36):
         self.grid = grid
         self.prior_states = np.asarray(prior_states, dtype=np.int8).copy()
         self.ground_z_m = np.asarray(ground_z_m, dtype=float).copy()
@@ -368,6 +369,7 @@ class OnboardObstacleMap:
         self.subdiv = int(subdiv)
         self.prior_margin_m = float(prior_margin_m)
         self.obstacle_margin_m = float(obstacle_margin_m)
+        self.blocked_margin_m = float(blocked_margin_m)
 
         self.fine_grid = Grid(
             grid.origin,
@@ -384,6 +386,7 @@ class OnboardObstacleMap:
         self.confirm_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
         self.miss_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
         self.fine_onboard_blocked = np.zeros(self.fine_grid.shape, dtype=bool)
+        self.protected_blocked = np.zeros(self.fine_grid.shape, dtype=bool)
         self.stale_clear_ticks = 18  # 1.8 s of clear close-range LiDAR view frees vacated dynamic cells.
         self.cell_sources = {}  # fine (r, c) -> set of {"lidar", "rgbd"}
         self.coarse_sources = {}  # coarse (r, c) -> set of {"lidar", "rgbd"}
@@ -462,6 +465,34 @@ class OnboardObstacleMap:
             self._dirty = True
         return added
 
+    def mark_no_runover_zone(self, center_xy, radius_m=0.68, keep_clear_xy=None, keep_clear_radius_m=0.50):
+        """Permanently block a detected victim's footprint on the fine onboard map so the rover never drives over it."""
+        center_xy = np.asarray(center_xy[:2], dtype=float)
+        keep_xy = None if keep_clear_xy is None else np.asarray(keep_clear_xy[:2], dtype=float)
+        r0, c0 = self.fine_grid.cell(center_xy)
+        pad = max(1, math.ceil(radius_m / self.fine_grid.resolution))
+        added = 0
+        for dr in range(-pad, pad + 1):
+            for dc in range(-pad, pad + 1):
+                cell = (r0 + dr, c0 + dc)
+                if not self.fine_grid.contains(cell):
+                    continue
+                xy = self.fine_grid.center(cell)
+                if float(np.linalg.norm(xy - center_xy)) > radius_m:
+                    continue
+                if keep_xy is not None and float(np.linalg.norm(xy - keep_xy)) < keep_clear_radius_m:
+                    continue
+                if not self.fine_onboard_blocked[cell] or not self.protected_blocked[cell]:
+                    self.fine_onboard_blocked[cell] = True
+                    self.protected_blocked[cell] = True
+                    self.confirm_counts[cell] = max(int(self.confirm_counts[cell]), self.confirm_frames)
+                    self.cell_sources.setdefault(cell, set()).add("victim_zone")
+                    self.coarse_sources.setdefault((cell[0] // self.subdiv, cell[1] // self.subdiv), set()).add("victim_zone")
+                    added += 1
+        if added:
+            self._dirty = True
+        return added
+
     @property
     def effective_states(self):
         if self._dirty or self._effective_cache is None:
@@ -472,15 +503,20 @@ class OnboardObstacleMap:
             prior_dist = distance_transform_edt(np.pad(prior_open, 1))[1:-1, 1:-1]
             prior_clear = self.fine_grid.resolution * (prior_dist - 0.5)
 
+            prior_non_blocked = self.fine_prior != BLOCKED
+            pb_dist = distance_transform_edt(np.pad(prior_non_blocked, 1))[1:-1, 1:-1]
+            pb_clear = self.fine_grid.resolution * (pb_dist - 0.5)
+
             obs_open = ~self.fine_onboard_blocked
             obs_dist = distance_transform_edt(np.pad(obs_open, 1))[1:-1, 1:-1]
             obs_clear = self.fine_grid.resolution * (obs_dist - 0.5)
 
-            self._clearance_cache = np.minimum(prior_clear, obs_clear)
+            self._clearance_cache = np.minimum(np.minimum(prior_clear, pb_clear), obs_clear)
             self._usable_cache = (
                 prior_open
                 & obs_open
                 & (prior_clear >= self.prior_margin_m)
+                & (pb_clear >= self.blocked_margin_m)
                 & (obs_clear >= self.obstacle_margin_m)
             )
             self._dirty = False
@@ -547,6 +583,8 @@ class OnboardObstacleMap:
         latched = np.argwhere(self.fine_onboard_blocked)
         if len(latched):
             for r, c in latched:
+                if self.protected_blocked[r, c]:
+                    continue
                 key = (int(r), int(c))
                 if key in filtered:
                     self.miss_counts[r, c] = 0
@@ -657,9 +695,10 @@ class OnboardObstacleMap:
         rover_xy = np.asarray(rover_xy, dtype=float)
         goal_xy = np.asarray(goal_xy, dtype=float)
         usable = self.usable_mask
-        # Add soft repulsion near onboard obstacles and prior boundaries so detours stay centered.
+        # Add soft repulsion near onboard obstacles and prior boundaries so detours stay centered
+        # well clear of tree trunks and rock corners rather than hugging narrow edges.
         base_cost = np.ones(self.fine_grid.shape, dtype=float) if self.fine_cost is None else self.fine_cost.copy()
-        edge_pen = np.where(self._clearance_cache < 0.50, 0.8 * (0.50 - self._clearance_cache) / 0.25, 0.0)
+        edge_pen = np.where(self._clearance_cache < 0.75, 1.6 * (0.75 - self._clearance_cache) / 0.35, 0.0)
         plan_cost = base_cost + edge_pen
 
         try:
@@ -805,6 +844,11 @@ class RuleLocalPlanner:
             return False
         if v == 0.0 and abs(w) > 0.0 and nearest < 0.28:
             return False
+        delta = inp.lookahead_xy - inp.pose_xy
+        if float(np.hypot(delta[0], delta[1])) > 0.15:
+            heading_err = wrap_angle(math.atan2(delta[1], delta[0]) - inp.yaw)
+            if abs(heading_err) > 1.05 and v > 0.03:
+                return False
         if v == 0.0 and w == 0.0:
             return True
         return self._rollout(inp, v, w, nearest, inp.onboard_map.continuous_clearance(inp.pose_xy),
@@ -934,7 +978,7 @@ class RouteNavigationController:
                  local_planner=None, settle_time_s=1.5, settle_speed_mps=0.03,
                  settle_yaw_rate=0.08, goal_tolerance_m=0.32, lookahead_m=0.80,
                  dynamic_refinement_enabled=False, max_refinement_requests=2,
-                 min_detour_saving_m=15.0):
+                 min_detour_saving_m=15.0, victim_ignore_xy=None, victim_ignore_radius_m=0.95):
         self.onboard_map = onboard_map
         self.route_xy = np.asarray(initial_route_xy, dtype=float).copy()
         self.route_history = [self.route_xy.tolist()]
@@ -948,6 +992,9 @@ class RouteNavigationController:
         self.dynamic_refinement_enabled = bool(dynamic_refinement_enabled)
         self.max_refinement_requests = int(max_refinement_requests)
         self.min_detour_saving_m = float(min_detour_saving_m)
+        self.victim_ignore_xy = (None if victim_ignore_xy is None
+                                 else np.asarray(victim_ignore_xy[:2], dtype=float))
+        self.victim_ignore_radius_m = float(victim_ignore_radius_m)
 
         self.waypoint_idx = 0
         self.prev_cmd = (0.0, 0.0)
@@ -1147,7 +1194,16 @@ class RouteNavigationController:
             obs_body = np.empty((0, 2), dtype=float)
             obs_enu = np.empty((0, 2), dtype=float)
 
-        newly_blocked = self.onboard_map.update(pose_xy, lidar_enu_xy, rgbd_enu_xy)
+        map_lidar_enu = lidar_enu_xy
+        map_rgbd_enu = rgbd_enu_xy
+        if self.victim_ignore_xy is not None:
+            r_ign = self.victim_ignore_radius_m
+            if len(map_lidar_enu):
+                map_lidar_enu = map_lidar_enu[np.linalg.norm(map_lidar_enu - self.victim_ignore_xy, axis=1) > r_ign]
+            if len(map_rgbd_enu):
+                map_rgbd_enu = map_rgbd_enu[np.linalg.norm(map_rgbd_enu - self.victim_ignore_xy, axis=1) > r_ign]
+
+        newly_blocked = self.onboard_map.update(pose_xy, map_lidar_enu, map_rgbd_enu)
         if newly_blocked:
             self._record_event(
                 now, "OBSTACLE_CELLS_BLOCKED",

@@ -170,6 +170,14 @@ class CompetitionToolsTests(unittest.TestCase):
         # Rover's onboard barrier must remain strictly preserved after UAV merge!
         self.assertTrue(omap.fine_onboard_blocked.any())
 
+    def test_triple_cargo_rack_proto_and_config(self):
+        proto_txt = (ROOT / "protos/ResearchRover.proto").read_text(encoding="utf-8")
+        for bay in ("cargo1Scale", "cargo2Scale", "cargo3Scale"):
+            self.assertIn(f"field SFVec3f {bay}", proto_txt)
+            self.assertIn(f"scale IS {bay}", proto_txt)
+        common = json.loads((ROOT / "config/search/common.json").read_text(encoding="utf-8"))
+        self.assertEqual(int(common["cargo_capacity"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

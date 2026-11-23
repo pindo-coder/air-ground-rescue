@@ -149,6 +149,12 @@ def draw_rescue_preview(folder, eval_summary, rover_status, victims_doc):
     cells = np.zeros((*states.shape, 3), dtype=np.uint8)
     for state, color in palette.items():
         cells[states == state] = color
+    dyn_ref = rover_status.get("dynamic_refinement") or {}
+    for rec in dyn_ref.get("history", []):
+        for xy in rec.get("newly_freed_xy_m", []):
+            rc = grid.cell(xy)
+            if grid.contains(rc):
+                cells[rc] = (86, 224, 180)
     for item in rover_status.get("onboard_blocked_cells", []):
         r, c = item["row"], item["col"]
         if 0 <= r < states.shape[0] and 0 <= c < states.shape[1]:
@@ -333,7 +339,10 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
     cv2.rectangle(base_pip, (0, 0), (pip_w - 1, pip_h - 1), (210, 225, 235), 2)
 
     out_w, out_h = 1280, 720
-    fps = max(5.0, 5.0 * float(video_speed))
+    hold_repeat = 2 if float(video_speed) <= 1.2 else 1
+    fps = max(5.0, 5.0 * float(video_speed) * hold_repeat)
+    speed_label_cn = "1倍速实时" if abs(float(video_speed) - 1.0) < 0.05 else f"{video_speed:.0f}倍速"
+    speed_tag_short = "1倍速实时" if abs(float(video_speed) - 1.0) < 0.05 else f"{video_speed:.0f}x"
     video_path = folder / "evaluation/rescue_simulation.mp4"
     writer = None
     used_codec = None
@@ -363,6 +372,7 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         "FACE_VICTIM": "转向正对伤员",
         "VERIFY_AND_DELIVER": "抵近停稳复核",
         "DELIVERED": "完成物资投送",
+        "WAITING_UAV_REFINEMENT": "呼叫无人机实时补拍",
         "ARRIVED": "到达停稳",
         "STOPPED_SAFE": "安全停车",
     }
@@ -395,7 +405,7 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
             dframe = cv2.addWeighted(overlay, 0.74, dframe, 0.26, 0.0)
             hud_uav = (
                 f"阶段一：无人机航测建图与纯 YOLO 空中搜寻 | "
-                f"仿真时间 {idx * 0.2:.1f} s（{video_speed:.0f}倍速）| 第三人称跟飞 + 机腹下视"
+                f"仿真时间 {idx * 0.2:.1f} s（{speed_label_cn}）| 第三人称跟飞 + 机腹下视"
             )
             captions = []
             if nadir_files:
@@ -409,8 +419,9 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
                     dframe[ny0:ny0 + nh, nx0:nx0 + nw] = nimg
                     captions.append((nx0 + 2, ny0 - 26, "无人机机腹下视航拍"))
             dframe = draw_cn_labels(dframe, hud_uav, captions)
-            writer.write(dframe)
-            written += 1
+            for _ in range(hold_repeat):
+                writer.write(dframe)
+                written += 1
 
     # Phase 2: Rover driving & rescue video + live Rover FPV PiP + live UAV Mini-Map PiP.
     fpv_dir = folder / "rover/fpv_frames"
@@ -429,10 +440,12 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         cv2.rectangle(overlay, (0, 0), (out_w, 54), (16, 24, 34), -1)
         frame = cv2.addWeighted(overlay, 0.74, frame, 0.26, 0.0)
         st_cn = state_cn_map.get(row["state"], row["state"])
+        cap = int(eval_summary["cargo_capacity"])
+        rem_cargo = max(0, cap - int(row["delivered"]))
         hud1 = (
-            f"阶段二：四轮车纯 YOLO + VCTP/IGHA* + {local_tag} | "
-            f"t={row['time_s']:.1f} s（{video_speed:.0f}x）| 车速 {row['speed']:.2f} m/s | "
-            f"已投送 {row['delivered']}/{eval_summary['cargo_capacity']} | {st_cn}"
+            f"阶段二：三仓四轮车纯 YOLO + VCTP/IGHA* + {local_tag} | "
+            f"t={row['time_s']:.1f} s（{speed_tag_short}）| 车速 {row['speed']:.2f} m/s | "
+            f"已投送 {row['delivered']}/{cap}（余仓{rem_cargo}）| {st_cn}"
         )
         captions = []
 
@@ -458,8 +471,9 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         captions.append((x0 + 2, y0 - 26, "无人机通行图 + 小车实时轨迹"))
 
         frame = draw_cn_labels(frame, hud1, captions)
-        writer.write(frame)
-        written += 1
+        for _ in range(hold_repeat):
+            writer.write(frame)
+            written += 1
 
     writer.release()
     if written > 0 and video_path.is_file() and video_path.stat().st_size > 1024:
@@ -546,12 +560,13 @@ def apply_weather_to_world(world_path, weather):
 
 
 def run(profile="full", detector="yolo", planner="igha_vctp",
-        max_victims=2, refinement_strategy="route_value", nadir_only=False,
+        max_victims=3, refinement_strategy="route_value", nadir_only=False,
         victim_seed=None, random_clothing=False, postures=None, weather="clear",
         local_policy="rule", checkpoint=None,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
-        port=18578, timeout=360.0):
+        dynamic_refinement=False,
+        port=18578, timeout=480.0):
     if (victim_seed is not None or postures) and map_from is not None:
         raise ValueError("--victim-seed / --postures requires a fresh UAV survey (omit --map-from).")
     if local_policy == "neural" and not checkpoint:
@@ -602,7 +617,7 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
             print(f"[Run rescue] Found {len(av_doc['candidates'])} multi-view aerial candidate(s).", flush=True)
 
     world = ROOT / "worlds" / f"_validation_{run_id}.wbt"
-    build_nav_world(world, config, injected, reuse_map=reuse_map)
+    build_nav_world(world, config, injected, reuse_map=reuse_map, dynamic_refinement=dynamic_refinement)
     if weather and weather != "clear":
         apply_weather_to_world(world, weather)
         print(f"[Run rescue] Applied Webots weather degradation: {weather}.", flush=True)
@@ -673,6 +688,8 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         UAV_NAV_KEEP_OPEN="1" if keep_open else "0",
         UAV_RECORD_VIDEO="1" if record_video else "0",
         UAV_VIDEO_SPEED=str(video_speed),
+        UAV_DYNAMIC_REFINEMENT="1" if dynamic_refinement else "0",
+        UAV_DYNAMIC_STANDBY_ONLY="1" if (dynamic_refinement and reuse_map) else "0",
         PYTHONDONTWRITEBYTECODE="1",
     )
 
@@ -756,9 +773,11 @@ def main():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--detector", choices=("yolo", "surrogate_rgbd"), default="yolo")
     parser.add_argument("--planner", choices=("igha_vctp", "astar"), default="igha_vctp")
-    parser.add_argument("--max-victims", type=int, default=2,
-                        help="Maximum number of supply crates / victims to visit in one sortie (default: 2).")
+    parser.add_argument("--max-victims", type=int, default=3,
+                        help="Maximum number of supply crates / victims to visit in one sortie (default: 3).")
     parser.add_argument("--refinement-strategy", choices=("density", "route_value"), default="route_value")
+    parser.add_argument("--dynamic-refinement", action="store_true",
+                        help="Enable mid-mission rover-to-UAV oblique refinement to unlock unreachable victims.")
     parser.add_argument("--nadir-only", action="store_true",
                         help="Skip oblique refinement pass for faster fresh-flight runs.")
     parser.add_argument("--random-victims", action="store_true",
@@ -786,7 +805,7 @@ def main():
     parser.add_argument("--video-speed", type=float, default=4.0,
                         help="Playback speedup factor for recorded simulation video (default: 4.0x).")
     parser.add_argument("--port", type=int, default=18578)
-    parser.add_argument("--timeout", type=float, default=360.0)
+    parser.add_argument("--timeout", type=float, default=480.0)
     args = parser.parse_args()
     vseed = args.victim_seed
     if args.random_victims and vseed is None:
@@ -811,6 +830,7 @@ def main():
         keep_open=args.keep_open,
         record_video=args.record_video,
         video_speed=args.video_speed,
+        dynamic_refinement=args.dynamic_refinement,
         port=args.port,
         timeout=args.timeout,
     )
