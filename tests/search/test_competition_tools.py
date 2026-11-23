@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from igha_star import plan_igha_star
 from import_real_dsm import dsm_to_uav_map
+from posture_casualty import ALL_POSTURES, POSTURE_LOCAL_POINTS, build_posture_casualty_vrml
 from rescue_dashboard import build_html
 from route_tracker import OnboardObstacleMap
 from run_uav_rescue import apply_weather_to_world
@@ -100,6 +101,23 @@ class CompetitionToolsTests(unittest.TestCase):
             txt = w.read_text(encoding="utf-8")
             self.assertIn("visibilityRange 38.0", txt)
             self.assertIn("luminosity 0.64", txt)
+
+    def test_multi_posture_casualty_vrml_and_keypoints(self):
+        flat = lambda x, y: 0.25
+        for idx, posture in enumerate(ALL_POSTURES, start=1):
+            pts = POSTURE_LOCAL_POINTS[posture]
+            self.assertEqual(pts.ndim, 2)
+            self.assertEqual(pts.shape[1], 3)
+            self.assertTrue(np.isfinite(pts).all())
+            vrml = build_posture_casualty_vrml(
+                f"VICTIM_{idx}", f"victim_{idx}", [1.0, -2.0], 0.4, flat,
+                posture=posture, shirt_def=f"SHIRT_APP_{idx}", pants_def=f"PANTS_APP_{idx}",
+            )
+            self.assertIn(f"DEF VICTIM_{idx} Solid", vrml)
+            self.assertIn(f"DEF SHIRT_APP_{idx}", vrml)
+            self.assertIn(f"DEF PANTS_APP_{idx}", vrml)
+        # half_buried keypoints strictly cover exposed upper body only (x <= 0.0).
+        self.assertLessEqual(float(POSTURE_LOCAL_POINTS["half_buried"][:, 0].max()), 0.0)
 
 
 if __name__ == "__main__":

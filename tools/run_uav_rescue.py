@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 from aerial_products import export_products
 from build_search_worlds import replace_node
 from metrics import height_at
+from posture_casualty import ALL_POSTURES, NON_SUPINE_POSTURES, build_posture_casualty_vrml
 from run_search import ROOT, executable_path, simulator_has_errors
 from run_uav_mapping import PROFILES, refinement_metrics, survey_metrics
 from run_uav_navigation import OBSTACLE_PRESETS, build_nav_world
@@ -60,7 +61,7 @@ def _terrain_slope_deg(terrain, x, y, delta=0.45):
     return math.degrees(math.atan(math.hypot(dx, dy)))
 
 
-def sample_random_victims_d(config, seed, count=3, random_clothing=False):
+def sample_random_victims_d(config, seed, count=3, random_clothing=False, postures=None):
     """Sample valid, non-overlapping random victim poses inside the survey bounds (offline world-gen only)."""
     terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8"))
     base_b = json.loads((ROOT / "evaluation/scenarios/B.json").read_text(encoding="utf-8"))
@@ -78,6 +79,7 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
 
     victims = []
     min_pair = 4.0 if (bx1 - bx0) <= 25 else 7.5
+    posture_seq = list(postures) if postures else ["supine"] * count
     for idx in range(1, count + 1):
         chosen = None
         for _ in range(1200):
@@ -102,10 +104,12 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
             raise RuntimeError(f"Failed to sample valid random victim #{idx} for seed={seed}")
         color_name, shirt_rgb = rng.choice(RANDOM_SHIRT_COLORS) if random_clothing else ("default_blue", None)
         pants_rgb = rng.choice(RANDOM_PANTS_COLORS) if random_clothing else None
+        posture = posture_seq[(idx - 1) % len(posture_seq)]
         victims.append(dict(
             id=idx,
             xy=list(chosen),
             yaw_rad=round(rng.uniform(-math.pi, math.pi), 4),
+            posture=posture,
             shirt_name=color_name,
             shirt_rgb=shirt_rgb,
             pants_rgb=pants_rgb,
@@ -114,9 +118,8 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
 
 
 def apply_random_victims_to_world(world_path, victims, terrain):
-    """Replace the 3 victim Solid nodes in the temporary validation world with randomized placements."""
+    """Replace victim Solid nodes in the temporary validation world with randomized placements & postures."""
     scene = world_path.read_text(encoding="utf-8")
-    # Remove the 3 default victim nodes from the temporary world.
     for pat in (
         r"\bDEF\s+CASUALTY\s+Solid",
         r"\bDEF\s+SEARCH_VICTIM_2\s+Solid",
@@ -127,31 +130,14 @@ def apply_random_victims_to_world(world_path, victims, terrain):
 
     for idx, v in enumerate(victims, 1):
         vkey = ("A", "B", "C")[(idx - 1) % 3]
-        el = RescueElements(dict(key=vkey, seed=900 + idx * 31, goal=v["xy"]),
-                            lambda x, y: height_at(terrain, x, y))
-        el.casualty()
-        node = el.nodes[0]
+        posture = v.get("posture", "supine")
         def_name = "CASUALTY" if idx == 1 else f"SEARCH_VICTIM_{idx}"
-        node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
-        node = node.replace('name "casualty"', f'name "search victim {idx}"', 1)
-        # Apply randomized yaw via ground_frame rotation directly on the outer Solid node.
-        from scene_elements import axis_angle, ground_frame
-        rot = axis_angle(ground_frame(v["xy"][0], v["xy"][1], v["yaw_rad"],
-                                      lambda x, y: height_at(terrain, x, y)))
-        rot_str = " ".join(f"{val:.6f}" for val in rot)
-        node = re.sub(r"rotation\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                      f"rotation {rot_str}", node, count=1)
-        if v.get("shirt_rgb"):
-            lines = []
-            for line in node.splitlines():
-                if "_shirt.obj" in line:
-                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                                  f"baseColor {v['shirt_rgb']}", line, count=1)
-                elif "_pants.obj" in line and v.get("pants_rgb"):
-                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                                  f"baseColor {v['pants_rgb']}", line, count=1)
-                lines.append(line)
-            node = "\n".join(lines)
+        node = build_posture_casualty_vrml(
+            def_name, f"search victim {idx} ({posture})",
+            v["xy"], v["yaw_rad"], lambda x, y: height_at(terrain, x, y),
+            posture=posture, mesh_key=vkey,
+            shirt_rgb=v.get("shirt_rgb"), pants_rgb=v.get("pants_rgb"),
+        )
         scene += "\n" + node + "\n"
     world_path.write_text(scene, encoding="utf-8")
 
@@ -561,13 +547,13 @@ def apply_weather_to_world(world_path, weather):
 
 def run(profile="full", detector="yolo", planner="igha_vctp",
         max_victims=2, refinement_strategy="route_value", nadir_only=False,
-        victim_seed=None, random_clothing=False, weather="clear",
+        victim_seed=None, random_clothing=False, postures=None, weather="clear",
         local_policy="rule", checkpoint=None,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
         port=18578, timeout=360.0):
-    if victim_seed is not None and map_from is not None:
-        raise ValueError("--victim-seed / --random-victims requires a fresh UAV survey (omit --map-from).")
+    if (victim_seed is not None or postures) and map_from is not None:
+        raise ValueError("--victim-seed / --postures requires a fresh UAV survey (omit --map-from).")
     if local_policy == "neural" and not checkpoint:
         raise ValueError("--checkpoint is required when --local-policy neural.")
     checkpoint_path = Path(checkpoint).resolve() if checkpoint else None
@@ -621,11 +607,26 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         apply_weather_to_world(world, weather)
         print(f"[Run rescue] Applied Webots weather degradation: {weather}.", flush=True)
     randomized_victims = None
-    if victim_seed is not None:
-        v_count = 2 if profile == "local" else 3
-        randomized_victims, terrain = sample_random_victims_d(
-            config, seed=victim_seed, count=v_count, random_clothing=random_clothing,
-        )
+    if victim_seed is not None or postures:
+        if victim_seed is not None:
+            v_count = len(postures) if postures else (2 if profile == "local" else 3)
+            randomized_victims, terrain = sample_random_victims_d(
+                config, seed=victim_seed, count=v_count,
+                random_clothing=random_clothing, postures=postures,
+            )
+        else:
+            # Replace the 3 default Scene D victim poses in-place with specified postures!
+            terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8"))
+            rng_p = random.Random(71)
+            randomized_victims = []
+            for idx, tv in enumerate(terrain["victims"], 1):
+                p_name = postures[(idx - 1) % len(postures)]
+                cname, srgb = rng_p.choice(RANDOM_SHIRT_COLORS) if random_clothing else ("default_blue", None)
+                prgb = rng_p.choice(RANDOM_PANTS_COLORS) if random_clothing else None
+                randomized_victims.append(dict(
+                    id=tv["id"], xy=list(tv["xy"]), yaw_rad=float(tv.get("yaw", 0.0)),
+                    posture=p_name, shirt_name=cname, shirt_rgb=srgb, pants_rgb=prgb,
+                ))
         apply_random_victims_to_world(world, randomized_victims, terrain)
         eval_dir = folder / "evaluation"
         eval_dir.mkdir(parents=True, exist_ok=True)
@@ -633,14 +634,16 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         (eval_dir / "truth_override.json").write_text(
             json.dumps(dict(
                 evaluation_only=True,
-                victim_seed=int(victim_seed),
+                victim_seed=int(victim_seed) if victim_seed is not None else None,
                 random_clothing=bool(random_clothing),
+                postures=[v["posture"] for v in randomized_victims],
                 victims=randomized_victims,
             ), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         print(
-            f"[Run rescue] Spawned {len(randomized_victims)} randomized victim(s) (seed={victim_seed}, "
+            f"[Run rescue] Spawned {len(randomized_victims)} victim(s) "
+            f"(seed={victim_seed}, postures={[v['posture'] for v in randomized_victims]}, "
             f"random_clothing={random_clothing}); truth kept evaluator-only.",
             flush=True,
         )
@@ -764,6 +767,8 @@ def main():
                         help="Explicit integer seed for randomized victim spawning in Scene D.")
     parser.add_argument("--random-clothing", action="store_true",
                         help="Also randomize victim shirt & pants colors when spawning random victims.")
+    parser.add_argument("--postures", nargs="+", choices=ALL_POSTURES, default=None,
+                        help="Explicit disaster postures for victims (e.g. prone side curled seated half_buried).")
     parser.add_argument("--weather", choices=("clear", "lowlight", "fog"), default="clear",
                         help="Webots weather/lighting stress preset: clear, lowlight dusk, or dense valley fog.")
     parser.add_argument("--local-policy", choices=("rule", "neural"), default="rule",
@@ -795,6 +800,7 @@ def main():
         nadir_only=args.nadir_only,
         victim_seed=vseed,
         random_clothing=args.random_clothing,
+        postures=args.postures,
         weather=args.weather,
         local_policy=args.local_policy,
         checkpoint=args.checkpoint,
