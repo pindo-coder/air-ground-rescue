@@ -1,124 +1,89 @@
-本目录为山洪灾后搜救渲染版，新增坍塌房屋、建筑废墟、照片材质和外围山体。启动方法与具体变化见 RENDERING_NOTES.md。
+# 援来有路 · 空地协同应急救援自主规划系统（Gazebo Harmonic & Webots 双平台）
 
-**无人机航测与地面规划演示**。双击 `start_uav_mapping.cmd`，无人机航测 84 × 60 米的 D 场景并选择未知区斜视补拍。小车读取地面高程和通行图，计算全局路线。输出包含 ETH aerial_mapper 方法的正射图、表面高程图、地面高程图、彩色点云和地图对照图。[运行说明](docs/UAV_MAPPING.md)
+本项目为《援来有路——一种面向应急救援场景的无人车自主探索导航系统》工程代码库。核心算法层完全跨仿真器共享，采用**单主干 `main` 双平台共存**架构，同时支持 **Gazebo Sim Harmonic + ROS 2 Jazzy（团队主开发与训练线）** 与 **Webots R2025a（并行验证与训练线）**。
 
-新增 **D 复杂山洪场景＋空地多视角验证**：84×60 m 的实体起伏地形、沟壑、252 棵有纹理的树、140 丛枝叶灌木、两个有碰撞体的移动障碍，以及车载/无人机 RGB-D 观测与来源可追溯的位置融合。双击 `start_search_D.cmd` 启动；画面和遮挡复核见 [森林场景](docs/FOREST_SCENE.md)，配置与对照命令见 [复杂场景说明](docs/COMPLEX_DISASTER_SCENE.md)。无人机当前是运动学观测平台，研究原型尚未证明识别或导航性能提升。
+- **D 山洪森林场景（`84 × 60 m`）**：`673 × 481` 原始高程网格、冲沟、废墟、252 棵树、140 丛灌木、3 名平躺伤员与动态漂木/碎石障碍。
+- **共享核心算法栈**：无人机 0.5 m / 0.125 m 粗细建图 → Traversing Mars 双路线搜索 → DUCPP 价值导向斜拍补拍 → VCTP 四轮精细验路 + IGHA\*（含起步 GPS 抖动恢复）→ 10 Hz 车载 LiDAR / RGB-D 闭环避障与 PyTorch BC+DAgger 神经网络局规 → 零泄漏 v2 全色域航拍 YOLO11n 检测与空地融合投送 → 安全裕度 $S_{\text{margin}}$ / 避障平滑度 $J_{\text{avoid}}$ 量化评测与离线中文指挥大屏。
 
-新增 **LiDAR＋RGB-D自主搜索研究模块**：搜索/确认/投送滚动调度、主动多视角确认、局部避障、报告与物资事件，以及独立评价与基线开关。运行入口为 `start_search_B.cmd`；受控平地流程验证入口为 `start_search_demo.cmd`。安装、算法边界和实验命令见 [SEARCH_ALGORITHMS.md](docs/SEARCH_ALGORITHMS.md)。该模块使用新增传感器，以下原版纯视觉说明仍适用于原A/B/C和`start_rover_B.cmd`。研究原型尚未证明性能提升。
+---
 
-# 初始方位引导的无明显道路纯视觉救援场景
+## 一、Gazebo Harmonic + ROS 2 Jazzy 快速复现（主开发线）
 
-本工程提供三套 Webots R2025a 户外模型，用于接入你们自己的纯视觉越野寻路与救援算法。地表无黄色道路、车辙、路肩或预设路线标记；车辆默认静止。本包另含可选的低速双目避障演示，未实现伤员识别或完整救援任务；你们的机器学习策略仍由队伍自行接入。
+完整环境安装、权重自检、分步命令与排坑见 **[gazebo/README.md](gazebo/README.md)**。在 Ubuntu 24.04 / WSL2 上按以下 5 步即可跑通闭环：
 
-新模型、数据和接口均位于本目录。GitHub 协作与队友复现步骤见 [TEAM_GUIDE.md](TEAM_GUIDE.md)，素材来源见 [MATERIAL_SOURCES.md](MATERIAL_SOURCES.md)。
+```bash
+# 1. 准备 ROS 2 Jazzy + 虚拟环境（首次）
+source /opt/ros/jazzy/setup.bash
+python3 -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -r requirements-build.txt -r requirements-search.txt -r requirements-search-yolo.txt
+.venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu124   # 纯 CPU 改用 .../whl/cpu
+.venv/bin/python -m pip install -r requirements-local-learning.txt
+.venv/bin/python tools/fetch_search_model.py
 
-本轮在 20261111 山洪场景上复用 `rescue_vision_lab` 的人物：身体使用分部网格与织物颜色、法线、粗糙度贴图，头部使用带皮肤照片的扫描模型。A/B/C 保留不同衣服颜色与手臂姿态。人物所需素材全部包含在 `assets/`，运行时不依赖旧工程。地形、建筑废墟与目标位置保持一致。头部已向肩部移近 6 厘米、下移 1.2 厘米，移除多余圆柱颈部，并同步对齐头颈碰撞代理。
+# 2. 构建并校验 D 场景 SDF 包
+.venv/bin/python tools/build_search_worlds.py --case D
+.venv/bin/python tools/export_gazebo_d.py
+gz sdf -k gazebo/generated/D/search_d.sdf
 
-## 启动
+# 3. 无人机全场航测 + DUCPP 补拍（生成可复用的先验图）
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode mapping --profile full --refinement-strategy route_value \
+  --out-dir runs/gz_survey_D_full
 
-| 启动文件 | 世界文件 | 场景内容 |
-|---|---|---|
-| `launch_A.cmd` | `worlds/A_trail.wbt` | 无道路起伏地表、倒木、残骸、灌木与红褐色衣服的伤员 |
-| `launch_B.cmd` | `worlds/B_washout.wbt` | 实体冲沟、倒木和残骸形成局部阻断；伤员穿蓝色衣服 |
-| `launch_C.cmd` | `worlds/C_generalization.wbt` | 不同高程、障碍布局、光照与草土配色；伤员穿卡其色衣服 |
+# 4. 纯 YOLO11n 空地协同双伤员救援闭环（复用先验图秒级启动；无桌面加 --headless）
+.venv/bin/python gazebo/run_gazebo_mission.py \
+  --mode rescue --profile full --detector yolo --planner igha_vctp --max-victims 2 \
+  --map-from runs/gz_survey_D_full --record-cameras --out-dir runs/gz_rescue_D_demo
 
-双击对应启动文件，也可以在 Webots 的 Open World 中直接打开世界文件。`launch_scene.cmd` 默认打开 B。
-
-在已打开的 Webots 窗口内切换：点击工具栏文件夹图标（Open World），进入本工程的 `worlds` 目录，选择上表中的 `.wbt` 文件，加载后点击 ▶。修改过场景文件后需重新打开，界面中的旧世界不会自动刷新。世界文件名为兼容启动入口沿用原名，A 也已改为无道路地形。
-
-队友需安装 Python 3，并在 Webots 的 Preferences 中将 Python command 指向本机解释器；不要把个人 Python 绝对路径写进共享文件。直接运行模型与静止预览不需要 NumPy、Pillow、OpenCV 或 PyTorch。生成场景和执行离线几何测试需要安装 `requirements-build.txt`；可选运动演示需要 `requirements-drive.txt`。非默认位置安装的 Webots 可通过 `WEBOTS_HOME` 环境变量或被 Git 忽略的 `webots.local.cmd` 配置，详见团队说明。
-
-## 场景与视觉条件
-
-- 地形范围 42 × 30 m；高程间距 0.125 m，共 337 × 241 个高程点，可视地面和碰撞使用同一份几何。
-- 已移除按路线绘制的黄色土路及道路边缘，也移除了沿路线平整地形的处理。草土色斑、地表细粒纹理与自然起伏独立于参考路径生成，整场连续覆盖。
-- 地形具有数米尺度的连续土丘、缓坡、浅洼和较短尺度的小起伏，各场总高差约 2.4～2.9 m（不是地理绝对海拔）。起点有一小片无着色的平缓过渡，便于空策略静止预览。
-- 树木、石块及低矮树根在整场散布，取消了沿道路排列的树石，不提供隐含的道路边界。
-- 沟槽具有真实高差，树根具有实际 2 cm 高度和碰撞体。石块可见几何与碰撞体一致，部分小地物仍是简化模型。
-- 每套新增 3 根实体倒木（直径 0.24～0.34 m）、2 组各 5 块碎石残骸、2 段破损残墙；局部形成需要绕行的阻挡，不沿固定路线排列。
-- 新增散布灌木和 10 片低草。灌木硬茎有碰撞体，叶团与草叶仅作视觉遮挡，不形成不可见的碰撞墙；柔性植被弯曲尚未模拟。
-- 新增 3 根外露约 2.3 cm 的低树根，与较高倒木构成不同高度的障碍。低树根标为“可跨越候选”，需要实际运动校准；其余较大障碍按绕行处理。
-- 伤员为约 1.67 m 长的静态人体网格，具有织物材质与皮肤扫描头部；简化碰撞代理透明显示，头颈代理与调整后的扫描头部对齐。各场景衣服颜色、朝向和手臂姿态不同。附近保留背包，侧方灌木提供部分视角遮挡；没有远距离红十字信标。人物尚无肢体动画、呼吸或布料动力学。
-- 每个场景均通过全场越野连通性检查：坡度不超过 8°、硬障碍包围盒膨胀 0.32 m 后，仍存在起点至目标 1.35 m 内、避开人体占地的通路。低树根候选不按完全阻挡处理；B 的原近路参考带单独验证为不连通，但全场有绕行空间。参考路径只用于离线质量检查，既不影响纹理/高程，也不要求算法沿它行驶。该静态检查不等价于实车或算法跑完全程。
-- 本轮没有加入流体、松软土陷车、雨滴、浓雾或动态坍塌。
-
-## 算法可以获得什么
-
-算法入口为 `controllers/vision_agent/policy.py`。以下为接口示意，接入你们的策略时保留该接口；当前文件已包含可选的双目避障演示：
-
-```python
-class Policy:
-    def reset(self, task):
-        ...
-
-    def act(self, observation):
-        return Action(linear_m_s=0.0, angular_rad_s=0.0,
-                      claim_arrival=False, active=True)
+# 5. 导出单文件离线中文指挥调度大屏
+.venv/bin/python tools/rescue_dashboard.py \
+  --run runs/gz_rescue_D_demo --export-static runs/gz_rescue_D_demo/dashboard_gazebo.html
 ```
 
-`reset(task)` 在回合启动时调用一次。task 包含相机参数、动作上限和初始粗方位：
+---
 
-```json
-{
-  "reference": "initial_camera_forward",
-  "center_deg_left_positive": 10,
-  "half_width_deg": 20,
-  "issued_once": true
-}
+## 二、Webots R2025a 快速复现（并行验证与训练线）
+
+完整技术说明与参数表见 **[AGENTS.md](AGENTS.md)**、[docs/UAV_NAVIGATION.md](docs/UAV_NAVIGATION.md) 与 [docs/LOCAL_POLICY.md](docs/LOCAL_POLICY.md)。Windows 环境初始化与运行：
+
+```powershell
+# 1. 创建虚拟环境并补齐依赖与世界文件（首次）
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-search.txt -r requirements-search-yolo.txt
+.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venv\Scripts\python.exe -m pip install -r requirements-local-learning.txt
+.venv\Scripts\python.exe tools/fetch_search_model.py
+.venv\Scripts\python.exe tools/build_search_worlds.py --case D
+
+# 2. 运行航测 / 救援闭环（也可直接双击 start_uav_mapping.cmd / start_uav_rescue.cmd）
+.venv\Scripts\python.exe tools/run_uav_rescue.py --profile full --detector yolo --planner igha_vctp --local-policy neural --checkpoint models/local_policy_dagger.pt --record-video
 ```
 
-角度始终相对于出发时相机朝向，左为正。上例表示出发时的左前方约 10°、容差 ±20°。它不会随着车辆转向而更新，不包含距离或目标坐标。各场景的提示由生成器在目标所在扇区内粗量化生成。
+---
 
-每次 `act(observation)` 获得：
+## 三、团队协作与分支规范（双仿真器共维护）
 
-| 字段 | 内容 |
-|---|---|
-| `left_bgra` / `right_bgra` | 同一步读取并复制的左右 BGRA 字节 |
-| `width` / `height` | 640 × 480 |
-| `timestamp_s` | 仿真时间戳 |
+仓库采用 **单主干 `main` + 目录隔离 + 短命特性分支** 协作，不再长期分叉独立仿真器分支：
 
-相机为双目 RGB，基线 0.14 m，安装高度约 0.30 m，水平视场角 90°，周期 100 ms。相机内外参和噪声设置可在 `protos/VisionRover.proto` 与公共 task 中查看。车辆没有 LiDAR、GPS、IMU、Compass 或轮编码器，策略控制器使用 Robot 而非 Supervisor。
+1. **目录分工边界**
+   - **公共核心层（双方共用）**：`controllers/uav_mapper/`、`controllers/uav_map_rover/`、`controllers/search_agent/`、`protos/`、`config/`、`evaluation/`、`tools/safety_metrics.py`、`tools/rescue_dashboard.py`、`tools/import_real_dsm.py`、`tools/train_local_policy.py`
+   - **Gazebo 专属层**：`gazebo/`、`tools/export_gazebo_*.py`、`tools/gazebo_d_robots.py`、`tools/webots_static_scene.py`、`tests/test_gazebo_*.py`
+   - **Webots 专属层**：`controllers/uav_survey/`、`tools/run_uav_*.py`、`start_uav_*.cmd`、`docs/`
+2. **分支与 PR 规则**
+   - 不直接向 `main` 强推；按任务从 `main` 切短命分支（`feat/gz-*`、`feat/webots-*`、`feat/algo-*`、`fix/*`），1~3 天内通过 Pull Request 合并回 `main`；
+   - GitHub Actions（[.github/workflows/tests.yml](.github/workflows/tests.yml)）会在每次向 `main` 提 PR 时自动执行**全量双端单元测试**与 **D 场景 Gazebo SDF 导出冒烟**，防止单边改动破坏另一仿真器。
+3. **训练权重分文件命名（防互相覆盖）**
+   - 航拍检测共用 `models/yolo11n_victim.pt`；
+   - 神经局部规划权重按仿真器区分：`models/local_policy_dagger.pt`（Webots）与 `models/local_policy_gazebo_dagger.pt`（Gazebo）。
+4. **提交前本地回归检查**
+   ```bash
+   python3 -m unittest discover -s tests -v
+   ```
 
-策略可以保留历史图像和内部记忆。车轮半径 0.09 m，轮距 0.41 m；接口对速度限幅为 ±0.35 m/s、角速度 ±1 rad/s。`active=True` 表示开始正式回合；默认预览返回 active=False。普通 `launch_A/B/C.cmd` 用于静止预览，`start_rover_B.cmd` 设置 `VISION_DRIVE=1` 后启用现有运动演示；不要在系统环境中全局设置该变量。算法主动宣布到达时设置 claim_arrival=True 并停车。
+---
 
-## 真值与评测
+## 文档导航
 
-公共提示位于 `config/public/`。高程、真实目标和离线检查用参考路径位于 `evaluation/scenarios/`，不作为算法输入。独立 Supervisor 评测器记录真实轨迹、路程、接触事件、首次靠近冲沟时间、翻车、沟槽跌落、出界和超时。当前任务允许全场自由选择通路，已取消偏离道路/走廊的统计，也不要求回到某个固定岔路。
-
-终止成功要求算法主动申报、距目标不超过 1.5 m、实际速度低于 0.03 m/s 达 2 s，并通过近似几何可见性检查。可见性检查考虑水平视场、地形、登记硬障碍包围盒及灌木叶团球体；草叶、树冠和人体自身遮挡仍未完整建模，不能替代图像识别准确率。没有给相机开启内置 Recognition 或分割真值输出。
-
-接触事件按高于局部地面 5.5 cm 的接触点起始时刻计数，不把正常轮地接触和可跨越的低树根算作碰撞。几何插值、碰撞阈值和冲沟接近范围都是评测近似；精细实验前应结合车辆尺寸校准。
-
-评测器只向控制适配器发送回合结束信号，不发送位置、高程、路线或实时目标方向。这是数据与代码接口上的分离，不是操作系统级文件访问隔离；请勿在策略中读取 evaluation 目录。
-
-没有激活策略时，状态为 PREVIEW；不能把这个状态的静止仿真算作导航成功。
-
-## 数据输出
-
-每次启动在 `runs/时间戳/场景ID/` 保存：
-
-- `observations/initial_task.json`：本回合只下发一次的公共任务提示。
-- `observations/left_02s.png` 等：默认第 2、8 秒的左右图像。
-- `evaluation/trajectory.csv` 与 `summary.json`：真值轨迹与评测，勿作为策略输入。
-
-连续记录可在启动 Webots 的进程环境中设置 `VISION_RECORD_EVERY_N=1`，表示每一控制步保存一对图像；默认最多 300 对，可用 `VISION_RECORD_MAX_PAIRS` 调整。对应 frames.jsonl 只记录时间戳、图像文件名和控制指令，不含地图或目标坐标。预览时车辆静止，采集的数据不会自动变成有运动的训练集。
-
-## 重新生成与验证
-
-使用装有 NumPy 与 Pillow 的 Python，在工程目录执行：
-
-```text
-python tools/build_scenarios.py
-python -m unittest discover -s tests -v
-python tools/validate_in_webots.py --webots "你的Webots路径/msys64/mingw64/bin/webots.exe"
-```
-
-生成器会覆盖三套世界、纹理、公开提示和评测元数据。单独改变一套可使用 `--scenario B --seed 204`。当前提交的成品地面贴图为 4096×4096；配置中的生成默认值为 2048，如需重新生成同等分辨率，使用 `python tools/build_scenarios.py --texture-size 4096`。重新生成前，请保存自己的界面修改；只运行现有场景时不需要执行生成器。
-
-人物渲染已接入生成器。需要从本地 glTF/GLB 源素材重建人物 OBJ 时执行 `python tools/build_casualty_assets.py`。对已经手动编辑过的世界，更新人物可执行 `python tools/upgrade_casualties.py`；它更新人物可见材质、网格与头颈代理，保留人物在场景中的位置及世界其他内容。执行前保存并关闭该世界，更新后重新打开。
-
-当前每组提供一个完整实例，A/B/C 之间高程、地物、目标及光照条件不同；B 另有实体冲沟。更换同组种子主要改变自然起伏相位、地物和外观，不等同于新增独立地貌类型。训练/测试应按地形与障碍布局划分，不能只以随机种子划分。进一步大规模生成需扩展地貌模板。
-
-自动 Webots 验证每套只运行 12 个仿真秒，检查加载、车辆静止稳定、四张 640 × 480 相机图像及场景导出，不测试自主导航成功率。
-
-`preview/` 提供每套全景、左右相机图、伤员细节和倒木细节。细节图由独立评测器在验证模式下临时调整观察视角导出；不移动小车，也不改变策略接收到的相机图像。新增模型生成器是 `tools/scene_elements.py`，元素清单仅保存在私有评测元数据中。
+- **[Gazebo 完整复现手册](gazebo/README.md)** · **[ROS 2 Jazzy 运行时与话题说明](gazebo/ros2_rescue/README.md)**
+- [Webots 航测 / 导航文档](docs/UAV_NAVIGATION.md) · [神经网络局部规划说明](docs/LOCAL_POLICY.md) · [工程技术交接文档](AGENTS.md)
+- [团队协作说明](TEAM_GUIDE.md) · [素材来源与许可](MATERIAL_SOURCES.md)

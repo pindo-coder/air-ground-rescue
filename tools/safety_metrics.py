@@ -6,7 +6,16 @@ import math
 import numpy as np
 
 
-def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30) -> dict:
+def trajectory_velocity_xy(time_s: np.ndarray, xy: np.ndarray) -> np.ndarray:
+    """Estimate planar velocity from successive positions in a sampled trajectory."""
+    dt = np.diff(time_s)[:, None]
+    velocity = np.zeros_like(xy, dtype=float)
+    np.divide(np.diff(xy, axis=0), dt, out=velocity[1:], where=dt > 1e-4)
+    return velocity
+
+
+def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30,
+                                  *, injected_obstacles: list[dict] | None = None) -> dict:
     """Compute S_margin (minimum obstacle clearance) and J_avoid (jerk integral) from a completed run."""
     run_dir = Path(run_dir)
     traj_path = run_dir / "evaluation/trajectory.csv"
@@ -22,16 +31,20 @@ def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30) -
 
     t = np.array([float(r["time_s"]) for r in rows], dtype=float)
     xy = np.array([[float(r["x"]), float(r["y"])] for r in rows], dtype=float)
-    speed = np.array([float(r["speed_mps"]) for r in rows], dtype=float)
-    yaw = np.array([float(r["yaw_rad"]) for r in rows], dtype=float)
     roll = np.array([abs(float(r["roll_deg"])) for r in rows], dtype=float)
     pitch = np.array([abs(float(r["pitch_deg"])) for r in rows], dtype=float)
 
     # Smoothness J_avoid = integral ||d a / dt||^2 dt (planar velocity vector + heading rate)
     dt = np.diff(t)
     valid_dt = dt > 1e-4
-    vx = speed * np.cos(yaw)
-    vy = speed * np.sin(yaw)
+    if "speed_mps" in rows[0]:
+        speed = np.array([float(r["speed_mps"]) for r in rows], dtype=float)
+        yaw = np.array([float(r["yaw_rad"]) for r in rows], dtype=float)
+        vx = speed * np.cos(yaw)
+        vy = speed * np.sin(yaw)
+    else:
+        vx, vy = trajectory_velocity_xy(t, xy).T
+        speed = np.hypot(vx, vy)
     ax = np.zeros_like(vx)
     ay = np.zeros_like(vy)
     ax[1:] = np.where(valid_dt, np.diff(vx) / np.where(valid_dt, dt, 1.0), 0.0)
@@ -62,14 +75,15 @@ def compute_run_safety_smoothness(run_dir: Path, rover_radius_m: float = 0.30) -
             obs_centers.append(np.column_stack([bx, by]))
             obs_radii.append(np.full(len(br), 0.5 * res, dtype=float))
 
-    if summary_path.is_file():
+    if injected_obstacles is None and summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        for ob in summary.get("injected_obstacles", []):
-            oxy = ob.get("xy_enu_m") or ob.get("xy_m")
-            osz = ob.get("size_m") or [0.5, 0.5, 0.5]
-            if oxy is not None:
-                obs_centers.append(np.array([[float(oxy[0]), float(oxy[1])]], dtype=float))
-                obs_radii.append(np.array([0.5 * max(float(osz[0]), float(osz[1]))], dtype=float))
+        injected_obstacles = summary.get("injected_obstacles", [])
+    for ob in injected_obstacles or []:
+        oxy = ob.get("xy_enu_m") or ob.get("xy_m")
+        osz = ob.get("size_m") or [0.5, 0.5, 0.5]
+        if oxy is not None:
+            obs_centers.append(np.array([[float(oxy[0]), float(oxy[1])]], dtype=float))
+            obs_radii.append(np.array([0.5 * max(float(osz[0]), float(osz[1]))], dtype=float))
 
     min_margin = None
     p05_margin = None

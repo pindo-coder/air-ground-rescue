@@ -22,7 +22,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from safety_metrics import compute_run_safety_smoothness
+from safety_metrics import compute_run_safety_smoothness, trajectory_velocity_xy
 
 
 def _encode_png_b64(img: Image.Image) -> str:
@@ -89,6 +89,8 @@ def _load_run_payload(run_dir: Path, include_video_url: bool = True) -> dict:
     run_dir = Path(run_dir)
     eval_path = run_dir / "evaluation/summary.json"
     nav_path = run_dir / "rover/nav_status.json"
+    if not nav_path.is_file():
+        nav_path = run_dir / "rover/rescue_status.json"
     victims_path = run_dir / "aerial_victims.json"
     traj_path = run_dir / "evaluation/trajectory.csv"
 
@@ -101,15 +103,34 @@ def _load_run_payload(run_dir: Path, include_video_url: bool = True) -> dict:
         with traj_path.open("r", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         stride = max(1, len(rows) // 360)
-        for r in rows[::stride]:
+        speeds = [float(row["speed_mps"]) for row in rows] if rows and "speed_mps" in rows[0] else []
+        if rows and not speeds:
+            time_s = np.array([float(row["time_s"]) for row in rows])
+            positions = np.array([[float(row["x"]), float(row["y"])] for row in rows])
+            speeds = np.linalg.norm(trajectory_velocity_xy(time_s, positions), axis=1).tolist()
+        for r, speed in zip(rows[::stride], speeds[::stride]):
             traj_xy.append([round(float(r["x"]), 3), round(float(r["y"]), 3)])
             t_list.append(round(float(r["time_s"]), 2))
-            v_list.append(round(float(r["speed_mps"]), 3))
+            v_list.append(round(speed, 3))
             roll_list.append(round(float(r["roll_deg"]), 2))
             pitch_list.append(round(float(r["pitch_deg"]), 2))
             loc_list.append(round(float(r["loc_error_m"]), 3) if r.get("loc_error_m") else None)
 
-    safety = compute_run_safety_smoothness(run_dir)
+    safety = eval_sum.get("safety_smoothness") or compute_run_safety_smoothness(run_dir)
+    local_policy = nav_st.get("local_policy_stats") or nav_st.get("local_policy")
+    routes_history = nav_st.get("routes_history") or []
+    if not routes_history:
+        for route_path in (run_dir / "rover/route.json", run_dir / "route.json"):
+            if not route_path.is_file():
+                continue
+            route_doc = json.loads(route_path.read_text(encoding="utf-8"))
+            route = route_doc.get("route_xy_m")
+            if not route and route_doc.get("selected_goal_id") is not None:
+                selected = next((r for r in route_doc.get("routes", []) if r.get("id") == route_doc["selected_goal_id"]), {})
+                route = selected.get("route_xy_m")
+            if route:
+                routes_history = [route]
+                break
     confirm_imgs = []
     for cp in sorted((run_dir / "rover").glob("victim_*_confirm.jpg")):
         b64 = _encode_file_b64(cp, max_w=380)
@@ -121,10 +142,18 @@ def _load_run_payload(run_dir: Path, include_video_url: bool = True) -> dict:
         run_dir / "evaluation/full_video_keyframes_cn.jpg",
         run_dir / "evaluation/twin_crate_release_showcase_cn.jpg",
         run_dir / "evaluation/final_scene.png",
+        run_dir / "evaluation/rescue_preview.png",
+        run_dir / "rover/chase_cam.jpg",
     ):
         if cand_kf.is_file():
             kf_b64 = _encode_file_b64(cand_kf, max_w=720)
             break
+    if kf_b64 is None:
+        for folder in ("chase_frames", "chase_cam"):
+            chase_frame = max((run_dir / "rover" / folder).glob("*.jpg"), default=None)
+            if chase_frame is not None:
+                kf_b64 = _encode_file_b64(chase_frame, max_w=720)
+                break
 
     video_rel = None
     if include_video_url and (run_dir / "evaluation/rescue_simulation.mp4").is_file():
@@ -133,8 +162,8 @@ def _load_run_payload(run_dir: Path, include_video_url: bool = True) -> dict:
     return dict(
         run_id=run_dir.name,
         evaluation=eval_sum,
-        local_policy=nav_st.get("local_policy") or {},
-        routes_history=nav_st.get("routes_history") or [],
+        local_policy=local_policy if isinstance(local_policy, dict) else {},
+        routes_history=routes_history,
         aerial_candidates=victims_doc.get("candidates") or [],
         map_layers=_build_map_layers(run_dir),
         telemetry=dict(t=t_list, xy=traj_xy, v=v_list, roll=roll_list, pitch=pitch_list, loc_err=loc_list),
@@ -147,6 +176,8 @@ def _load_run_payload(run_dir: Path, include_video_url: bool = True) -> dict:
 
 def discover_runs(limit: int = 25) -> list[dict]:
     runs_dir = ROOT / "runs"
+    if not runs_dir.is_dir():
+        return []
     found = []
     for p in sorted(runs_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
         if not p.is_dir():
@@ -329,6 +360,7 @@ function setLayer(layer) {
 function renderKPIs(d) {
   const ev = d.evaluation || {};
   const lp = d.local_policy || {};
+  const isNeural = lp.policy === 'neural' || ev.local_policy === 'neural';
   const dec = lp.decisions || {};
   const totDec = (dec.learner || 0) + (dec.safety_fallback || 0);
   const neuralPct = totDec > 0 ? (100 * (dec.learner || 0) / totDec) : 0;
@@ -342,14 +374,14 @@ function renderKPIs(d) {
   pill.textContent = (isOk ? '任务成功 · ' : '') + st + ` · 碰撞 ${ev.collisions ?? 0}`;
 
   const kpis = [
-    { cls:'teal', lbl:'任务与投送进度', val: ev.mode === 'rescue' ? `${ev.delivered_people ?? 0}/${ev.cargo_capacity ?? 2} 投送` : (ev.arrived ? '到达停稳' : st),
-      hint: ev.mode === 'rescue' ? `空中检出 ${ev.aerial_candidates_total ?? 0} 名 · 跨视角复核 ${ev.valid_cross_view_reports ?? 0} 名` : `终点误差 ${fmt(ev.final_goal_error_m,3,' m')}` },
+    { cls:'teal', lbl:'任务与投送进度', val: ev.mode === 'rescue' ? `${ev.delivered_people ?? 0}/${ev.cargo_capacity ?? ev.target_deliveries ?? 2} 投送` : ((ev.arrived || st === 'ARRIVED') ? '到达停稳' : st),
+      hint: ev.mode === 'rescue' ? `空中检出 ${ev.aerial_candidates_total ?? (d.aerial_candidates || []).length} 名 · 跨视角复核 ${ev.valid_cross_view_reports ?? 0} 名` : `终点误差 ${fmt(ev.final_goal_error_m,3,' m')}` },
     { cls:'', lbl:'空地融合定位 RMSE', val: ev.localization_rmse_m ? fmt(ev.localization_rmse_m,3,' m') : fmt((ev.rover_pose_error_m||ev.localization_error_m||{}).median,3,' m'),
-      hint:`误报数 ${ev.false_reports ?? 0} · 重规划 ${ev.replan_count ?? 0} 次` },
-    { cls:'', lbl:'行驶路程与耗时', val: fmt(ev.actual_path_length_m,2,' m'),
+      hint:`误报数 ${ev.false_reports ?? ((ev.total_reports ?? 0) - (ev.effective_reports ?? 0))} · 重规划 ${ev.replan_count ?? 0} 次` },
+    { cls:'', lbl:'行驶路程与耗时', val: fmt(ev.actual_path_length_m ?? ev.path_length_m,2,' m'),
       hint:`作业耗时 ${fmt(ev.total_rescue_duration_s ?? ev.travel_duration_s,1,' s')}` },
-    { cls:'orange', lbl:'神经网络局规占比', val: totDec > 0 ? fmt(neuralPct,1,'%') : '规则基线',
-      hint: totDec > 0 ? `P95 推理 ${fmt(p95,2,' ms')} · 回退 ${dec.safety_fallback||0} 步` : '未启用神经网络策略' },
+    { cls:'orange', lbl:'神经网络局规占比', val: totDec > 0 ? fmt(neuralPct,1,'%') : (isNeural ? '—' : '规则基线'),
+      hint: totDec > 0 ? `P95 推理 ${fmt(p95,2,' ms')} · 回退 ${dec.safety_fallback||0} 步` : (isNeural ? '暂无推理统计' : '未启用神经网络策略') },
     { cls:'teal', lbl:'最小安全裕度 S_margin', val: fmt(sm.min_safety_margin_m,3,' m'),
       hint:`全程碰撞 ${ev.collisions ?? 0} 次 · 底盘触碰 ${ev.chassis_contacts ?? 0} 次` },
     { cls:'', lbl:'避障平滑度 J_avoid', val: sm.j_avoid_integral !== undefined ? fmt(sm.j_avoid_integral,0) : '—',
@@ -359,7 +391,7 @@ function renderKPIs(d) {
     `<div class="kpi ${k.cls}"><div class="lbl">${k.lbl}</div><div class="val">${k.val}</div><div class="hint">${k.hint}</div></div>`
   ).join('');
   document.getElementById('policyTag').textContent =
-    `检测：${ev.detector || '—'} | 全局：${ev.planner || '—'} | 局规：${lp.policy === 'neural' ? '神经 DAgger' : '规则控制'}`;
+    `检测：${ev.detector || '—'} | 全局：${ev.planner || '—'} | 局规：${isNeural ? '神经 DAgger' : '规则控制'}`;
 }
 
 function drawMap(d) {
@@ -474,14 +506,18 @@ function renderMediaAndTable(d) {
 
   const ev = d.evaluation || {};
   const legs = ev.rover_legs || [];
-  const dels = ev.deliveries || [];
+  const dels = ev.deliveries?.length ? ev.deliveries : (ev.delivery_checks || []).map(check => ({
+    track_id: check.victim_id, true_distance_m: check.distance_m, valid: check.valid,
+  }));
   const audits = ev.aerial_candidates_audit || [];
   const tbody = document.getElementById('victimTable');
   if (!audits.length && !dels.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted);text-align:center;">定点闭环导航任务（目标：${ev.goal_label || ev.goal_id || '—'}，终点误差 ${fmt(ev.final_goal_error_m,3,' m')}）</td></tr>`;
+    const message = ev.mode === 'rescue' ? '暂无伤员复核或投送记录' :
+      `定点闭环导航任务（目标：${ev.goal_label || ev.goal_id || '—'}，终点误差 ${fmt(ev.final_goal_error_m,3,' m')}）`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted);text-align:center;">${message}</td></tr>`;
     return;
   }
-  tbody.innerHTML = audits.map(a => {
+  const auditRows = audits.map(a => {
     const leg = legs.find(l => l.victim_candidate_id === a.candidate_id) || {};
     const dl = dels.find(x => x.track_id === a.candidate_id);
     const idx = dels.indexOf(dl);
@@ -494,7 +530,12 @@ function renderMediaAndTable(d) {
       <td>${dl ? fmt(dl.true_distance_m,2,' m') : '—'}</td>
       <td>${dl && dl.valid ? '<span class="pill ok">已有效投送</span>' : '<span class="pill warn">空中已定位</span>'}</td>
     </tr>`;
-  }).join('');
+  });
+  const deliveryRows = dels.filter(dl => !audits.some(a => a.candidate_id === dl.track_id)).map(dl => `
+    <tr><td>候选 #${dl.track_id ?? '—'}</td><td>—</td><td>—</td><td>—</td>
+    <td>${fmt(dl.true_distance_m,2,' m')}</td>
+    <td>${dl.valid ? '<span class="pill ok">已有效投送</span>' : '<span class="pill warn">投送未通过核验</span>'}</td></tr>`);
+  tbody.innerHTML = [...auditRows, ...deliveryRows].join('');
 }
 
 function renderAll(d) {
