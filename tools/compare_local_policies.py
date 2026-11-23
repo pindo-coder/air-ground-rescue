@@ -8,6 +8,7 @@ import sys
 import time
 
 from run_uav_navigation import PROFILES, ROOT, run
+from safety_metrics import compute_run_safety_smoothness
 
 # Load checkpoints only to audit model lineage and the training/validation split.
 sys.path.insert(0, str(ROOT / "controllers/uav_map_rover"))
@@ -22,6 +23,7 @@ def metric_row(method, folder, nav, policy):
     learner = decisions.get("learner", 0)
     fallback = decisions.get("safety_fallback", 0)
     proposals = learner + fallback
+    sm = compute_run_safety_smoothness(folder)
     return dict(
         method=method, status=nav["status"], arrived=nav["arrived"], collisions=nav["collisions"],
         unsafe_state=nav["unsafe_state"], arrival_time_s=nav["travel_duration_s"],
@@ -32,6 +34,9 @@ def metric_row(method, folder, nav, policy):
         learner_nonzero_applied=decisions.get("learner_nonzero_applied", 0),
         safety_fallbacks=fallback, fallback_fraction=fallback / proposals if proposals else None,
         model_inference_p95_ms=inference.get("p95"),
+        min_safety_margin_m=sm.get("min_safety_margin_m"),
+        j_avoid_integral=sm.get("j_avoid_integral"),
+        rms_jerk_mps3=sm.get("rms_jerk_mps3"),
         cause=nav["failure_reason"], run_dir=str(folder),
     )
 

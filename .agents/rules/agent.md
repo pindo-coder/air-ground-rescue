@@ -1,8 +1,3 @@
----
-trigger: always_on
-description: "援来有路 Webots 工程完整技术交接文档（2026-11-21）。详述四种全局规划算法、车端闭环避障、神经网络局规、无人机/无人车 PBR 模型重设计、零泄漏 YOLO 微调、纯 YOLO 空地救援投送闭环、录屏方案、迁移清单与下一步计划。"
----
-
 # 援来有路 · Webots 工程完整技术交接文档
 
 **参赛项目**：《援来有路——一种面向应急救援场景的无人车自主探索导航系统》
@@ -91,12 +86,15 @@ python -m venv .venv
 - **D 全场大规模 BC + DAgger 训练（`runs/local_learning_D_full/`）**：
   - 采集 2 条 100% 零碰撞 D 全场 40 m 河谷专家轨迹（2,818 帧训练）+ 1 条独立障碍构型验证轨迹（1,340 帧）预训练 **`models/local_policy_bc.pt`**（`val_loss=0.0290`，`mae_v=0.0133 m/s`，`mae_w=0.0294 rad/s`，模式准确率 **`99.78%`**）；
   - 用 BC 策略在 2 个全新障碍构型上实跑 DAgger 回采（`expert_mix=0.15`，两条均 **`ARRIVED`、0 碰撞**，共聚合 **5,361 帧训练样本**），以 `lr=0.00025` 微调导出 **`models/local_policy_dagger.pt`**（验证误差进一步全面超越 BC：`val_loss=0.0276`、`mae_v=0.0126 m/s`、`mae_w=0.0280 rad/s`、模式准确率 **`99.78%`**）。
-- **D 全场留出 0.65 m 碎石三组同条件对比（`runs/local_learning_D_full/compare_full_detour_v2/comparison.json`，0% 专家混合）**：
-  - **规则专家**：`ARRIVED`，0 碰撞，`160.0 s`，`42.95 m`，终点误差 `0.323 m`，重规划 `8` 次；
-  - **Neural BC（`bc.pt`）**：**`ARRIVED`**，**0 碰撞**，`163.4 s`，`43.00 m`，终点误差 **`0.274 m`**（优于规则），重规划 **`6` 次**，**`97.4%` 直接神经网络控制**（回退仅 `2.60%`），P95 推理 **`1.19 ms`**；
-  - **Neural BC + DAgger（`dagger_v2.pt`）**：**0 碰撞**，回退率进一步降至全组最低 **`1.56%`**、重规划降至最低 **`5` 次**，180 s 时限内行驶 `38.31 m` 距终点仅 `1.49 m`（略超时未进停稳）；
-- **终极全栈合体实跑验收（`runs/uav_rescue_D_full_yolo_igha_vctp_clear_20261121_205200_21688`）**：
-  - **纯 v2 全色域 YOLO + DUCPP/VCTP/IGHA\* + 神经网络 DAgger 局部规划（`models/local_policy_dagger.pt`，`expert_mix=0`）**：**`MISSION_SUCCESS`**，全程自主行驶 **`69.26 m` / `284.0 s`**、**`2,620 / 2,755 = 95.1%` 直接由神经网络控制**（中位推理 `1.07 ms`、P95 `1.89 ms`）、**`0` 碰撞、`0` 车体接触**、**`2/2` 全部空地跨视角 YOLO 融合确认**（score `0.917`、`0.838`）、**`2/2` 有效物资投送**（`1.59 m`、`1.49 m`），融合定位 RMSE **`0.372 m`**！
+- **D 全场留出 0.65 m 碎石三组同条件对比（`runs/local_learning_D_full/compare_full_detour_v4/comparison.json`，`held_out=true`，0% 专家混合，200 s 预算，已含最小安全裕度 $S_{\text{margin}}$ 与避障平滑度 $J_{\text{avoid}}$）**：
+  - **规则专家**：`ARRIVED`，0 碰撞，`160.0 s`，`42.95 m`，终点误差 `0.323 m`，重规划 `8` 次，$S_{\text{margin}}=0.112\text{ m}$，$J_{\text{avoid}}=4352.1$；
+  - **Neural BC（`bc.pt`）**：**`ARRIVED`**，**0 碰撞**，`163.4 s`，`43.00 m`，终点误差 **`0.274 m`**，重规划 **`6` 次**，**`97.4%` 直接神经网络控制**（回退 `2.60%`），P95 推理 `1.27 ms`，$S_{\text{margin}}=0.122\text{ m}$，$J_{\text{avoid}}=2562.8$（平滑度提升 `41.1%`）；
+  - **Neural BC + DAgger（`dagger_v2.pt` / `models/local_policy_dagger.pt`）**：**`ARRIVED`**，**0 碰撞**，`193.3 s`，**`39.48 m`（全组最短 -8.1%）**，重规划最低 **`5` 次（-37.5%）**，**`98.5%` 直接神经网络控制**（回退最低 **`1.46%`**），P95 推理 **`1.25 ms`**，**$S_{\text{margin}}=0.191\text{ m}$（+70.6%）**，**$J_{\text{avoid}}=1561.3$（平滑度提升 64.1%）**；
+- **2026-11-22 交科赛冲刺优化新增模块（全仓库 81/81 单元测试通过）**：
+  - **IGHA\* 起步 GPS 抖动恢复（`controllers/uav_map_rover/igha_star.py`）**：起步位姿因 4 cm GPS 抖动落于细高程单像素噪点时，自动按角度就近搜索同位置可通行原地转向角及 1 细格容差，消除无谓 `astar_fallback`；
+  - **车载模块化双仓物资精准投放机构（`protos/ResearchRover.proto` + `controllers/uav_survey/uav_survey.py`）**：后甲板加装低剖面 CNC 双仓释放架（高度 ≤ `0.344 m`，零雷达/前视遮挡），满载 2 个带白十字橙色物资箱，每次物理投送时同步卸载对应舱位箱体；
+  - **7 组多随机位置 + 全色域随机换装实跑统计**：涵盖标准 D 全程全栈（`224203_1688`，89.1 s 中文 HUD 全程实录 `MISSION_SUCCESS` · 0 碰撞）、双仓机构 100% IGHA\*（`161638_22012`，`MISSION_SUCCESS` · 0 碰撞）、全非蓝衣随机 `seed=17`（`200923_13096`，`MISSION_SUCCESS` · 2/2 投送 · RMSE `0.239 m` · 0 碰撞）、`seed=42`、`seed=7` 及极端不可达 `seed=101/202`（安全拒入 0 碰撞），空中纯 YOLO 总检出 **`21/21 = 100%`**、**`0` 误报**、平均定位误差 **`0.130 ± 0.043 m`**；
+  - **安全平滑指标、真机摄影测量接口与中文指挥调度大屏**：`tools/safety_metrics.py`、`tools/import_real_dsm.py`（WebODM/Mini 4 Pro GeoTIFF DSM → `uav_map.npz` + `VCTP+IGHA*` 规划）、`tools/rescue_dashboard.py`（支持本地交互服务与单文件离线 HTML 导出 `runs/援来有路_空地协同指挥调度大屏_离线版.html`），配套单元测试 `tests/search/test_competition_tools.py`。
 
 ---
 

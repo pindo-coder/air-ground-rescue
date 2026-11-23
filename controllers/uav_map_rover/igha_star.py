@@ -115,13 +115,37 @@ def plan_igha_star(coarse_grid, states, vctp: VctpChecker, start_xy, goal_xy,
                 stats["vctp_rejected_unknown"] += 1
         return res
 
-    start_check = check_cached(start_xy[0], start_xy[1], start_yaw)
+    start_bin = _yaw_to_bin(start_yaw)
+    start_check = check_cached(start_xy[0], start_xy[1], _bin_to_yaw(start_bin))
     if start_check.status != "PASS":
-        return dict(
-            status="NO_ROUTE",
-            reason=f"START_VCTP_{start_check.status}: {start_check.reason}",
-            stats=stats,
-        )
+        # Skid-steer rover is already physically resting safely at start_xy; GPS jitter (~0.04 m)
+        # can align a single 0.125 m fine-DEM pixel under the belly at start_yaw. Try nearest
+        # VCTP-passing headings at start_xy (in-place turn) and 1-fine-cell GPS-uncertainty offsets.
+        recovered = None
+        for dbin in range(1, N_HEADINGS // 2 + 1):
+            for sign in (1, -1):
+                cand_bin = (start_bin + sign * dbin) % N_HEADINGS
+                c_res = check_cached(start_xy[0], start_xy[1], _bin_to_yaw(cand_bin))
+                if c_res.status == "PASS":
+                    recovered = (float(start_xy[0]), float(start_xy[1]), cand_bin)
+                    break
+            if recovered is not None:
+                break
+        if recovered is None and start_check.status == "FAIL":
+            for dx, dy in ((0.125, 0.0), (-0.125, 0.0), (0.0, 0.125), (0.0, -0.125),
+                           (0.125, 0.125), (0.125, -0.125), (-0.125, 0.125), (-0.125, -0.125)):
+                nx, ny = float(start_xy[0] + dx), float(start_xy[1] + dy)
+                if check_cached(nx, ny, _bin_to_yaw(start_bin)).status == "PASS":
+                    recovered = (nx, ny, start_bin)
+                    break
+        if recovered is None:
+            return dict(
+                status="NO_ROUTE",
+                reason=f"START_VCTP_{start_check.status}: {start_check.reason}",
+                stats=stats,
+            )
+        start_xy = np.array([recovered[0], recovered[1]], dtype=float)
+        start_bin = recovered[2]
 
     start_cell = h_grid.cell(start_xy)
     if not h_grid.contains(start_cell) or not math.isfinite(h_dist[start_cell]):
@@ -138,7 +162,6 @@ def plan_igha_star(coarse_grid, states, vctp: VctpChecker, start_xy, goal_xy,
             h += 0.15 * abs(_wrap(goal_yaw - yaw))
         return heuristic_weight * h
 
-    start_bin = _yaw_to_bin(start_yaw)
     start_key = (start_cell[0], start_cell[1], start_bin)
     start_pose = (float(start_xy[0]), float(start_xy[1]), _bin_to_yaw(start_bin))
 
