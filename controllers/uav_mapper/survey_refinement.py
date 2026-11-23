@@ -328,3 +328,190 @@ def refine_ground(grid, baseline, point_views, camera_origins, slope_limit, surv
                                          + 0.35 * spread[promoted] / 0.23
                                          + 0.45 * np.maximum(0, 1 - support[promoted] / 6.0))
     return result
+
+
+DEFAULT_DYNAMIC_REFINEMENT = dict(
+    patch_radius_m=3.5,
+    angle_from_vertical_deg=37.0,
+    altitude_enu_m=16.5,
+    transfer_speed_mps=8.0,
+)
+
+
+def select_dynamic_patches(
+    grid, states, ground_z_m, start_xy, goal_xy, rover_radius_m,
+    planning_cost=None, patch_radius_m=3.5, max_patches=2, unknown_cost=1.25,
+    exclude_centers=(),
+):
+    """Select targeted unknown-corridor patches for mid-mission rover-triggered UAV refinement."""
+    dual = plan_dual(
+        grid, states, start_xy, goal_xy, rover_radius_m,
+        planning_cost=planning_cost, unknown_cost=unknown_cost,
+    )
+    if dual["optimistic_status"] != "PLANNED":
+        # If the rover stopped right next to a detected barrier, snap query start to nearest
+        # non-BLOCKED-padded cell within 1.5 m so Traversing Mars can still find unknown bypasses.
+        from grid_route import center_mask
+        opt_states = np.where(states == 1, 1, FREE).astype(np.int8)
+        opt_usable = center_mask(grid, opt_states, rover_radius_m)
+        r0, c0 = grid.cell(start_xy)
+        cands = []
+        for dr in range(-3, 4):
+            for dc in range(-3, 4):
+                cell = (r0 + dr, c0 + dc)
+                if grid.contains(cell) and opt_usable[cell] and states[cell] == FREE:
+                    d = math.dist(grid.center(cell), start_xy)
+                    if d <= 1.6:
+                        cands.append((d, grid.center(cell)))
+        for _, anchor in sorted(cands, key=lambda item: item[0]):
+            trial = plan_dual(
+                grid, states, anchor, goal_xy, rover_radius_m,
+                planning_cost=planning_cost, unknown_cost=unknown_cost,
+            )
+            if trial["optimistic_status"] == "PLANNED":
+                dual = trial
+                break
+    summary = dict(
+        conservative_status=dual["conservative_status"],
+        conservative_length_m=dual["conservative_length_m"],
+        optimistic_status=dual["optimistic_status"],
+        optimistic_length_m=dual["optimistic_length_m"],
+        changes_reachability=dual["changes_reachability"],
+        potential_saving_m=dual["potential_saving_m"],
+        corridor_unknown_cell_count=dual["corridor_unknown_cell_count"],
+    )
+    corridor = [tuple(rc) for rc in dual.get("corridor_unknown_cells", []) if states[tuple(rc)] == UNKNOWN]
+    if dual["optimistic_status"] != "PLANNED" or not corridor:
+        return [], summary
+
+    rows, cols = np.indices(grid.shape)
+    positions = np.stack((cols + 0.5, rows + 0.5), axis=-1) * grid.resolution + grid.origin
+    free_mask = states == FREE
+    near_floor = distance_transform_edt(~free_mask) * grid.resolution <= 2.0
+    free_z_valid = free_mask & np.isfinite(ground_z_m)
+    fallback_z = float(np.median(ground_z_m[free_z_valid])) if np.any(free_z_valid) else 0.0
+
+    remaining = set(corridor)
+    patches = []
+    min_sep = 1.25 * float(patch_radius_m)
+
+    for _ in range(int(max_patches)):
+        if not remaining:
+            break
+        best = None
+        for cell in sorted(remaining):
+            center = grid.center(cell)
+            if any(math.dist(center, p["xy_m"]) < min_sep for p in patches):
+                continue
+            if any(math.dist(center, ex) < 0.75 * patch_radius_m for ex in exclude_centers):
+                continue
+            covered = [c for c in remaining if math.dist(grid.center(c), center) <= patch_radius_m]
+            if not covered:
+                continue
+            near_cnt = sum(1 for c in covered if near_floor[c])
+            # Prefer patches with the most corridor unknown cells & strong contact with existing FREE floor.
+            dist_to_rover = math.dist(center, start_xy)
+            score = len(covered) + 0.35 * near_cnt - 0.02 * dist_to_rover
+            if best is None or score > best[0]:
+                best = (score, center, covered)
+        if best is None:
+            break
+        _, center, covered = best
+        offset = np.linalg.norm(positions - center, axis=-1)
+        local_free = free_z_valid & (offset <= max(6.0, 2.0 * patch_radius_m))
+        elev = float(np.median(ground_z_m[local_free])) if np.any(local_free) else fallback_z
+        patches.append(dict(
+            xy_m=[round(float(center[0]), 3), round(float(center[1]), 3)],
+            elevation_m=round(elev, 3),
+            corridor_cells=len(covered),
+        ))
+        for c in covered:
+            remaining.discard(c)
+    return patches, summary
+
+
+def schedule_dynamic_oblique(
+    grid, patches, refinement_cfg, current_drone_xyz, now,
+    world_bounds=((-39.0, -27.5), (39.0, 27.5)),
+):
+    """Build a fast targeted oblique refinement flight from the drone's current position."""
+    cfg = dict(DEFAULT_DYNAMIC_REFINEMENT)
+    if refinement_cfg:
+        cfg.update(refinement_cfg)
+    altitude = float(cfg["altitude_enu_m"])
+    angle_rad = math.radians(float(cfg["angle_from_vertical_deg"]))
+    transfer_speed = max(2.0, float(cfg["transfer_speed_mps"]))
+    radius_m = float(cfg["patch_radius_m"])
+    (xmin, ymin), (xmax, ymax) = world_bounds
+
+    stations = []
+    for index, patch in enumerate(patches, start=1):
+        target = np.asarray(patch["xy_m"], dtype=float)
+        height = altitude - float(patch["elevation_m"])
+        if height <= 2.0:
+            continue
+        distance = height * math.tan(angle_rad)
+        for azimuth in (0.0, 0.5 * math.pi, math.pi, 1.5 * math.pi):
+            view = np.array([math.cos(azimuth), math.sin(azimuth)])
+            lateral = np.array([-view[1], view[0]])
+            for spacing in (-2.4, 0.0, 2.4):
+                position = target - distance * view + spacing * lateral
+                if not (xmin <= position[0] <= xmax and ymin <= position[1] <= ymax):
+                    continue
+                delta = target - position
+                stations.append(dict(
+                    xyz_m=[float(position[0]), float(position[1]), altitude],
+                    yaw_rad=float(math.atan2(delta[1], delta[0])),
+                    pitch_rad=float(-math.atan2(np.linalg.norm(delta), height)),
+                    patch=index,
+                ))
+
+    start_xyz = [float(current_drone_xyz[0]), float(current_drone_xyz[1]), float(current_drone_xyz[2])]
+    start_s = math.ceil(now) + 1
+    time_s = start_s
+    position = start_xyz
+    ordered = []
+    while stations:
+        station = min(stations, key=lambda item: math.dist(position, item["xyz_m"]))
+        stations.remove(station)
+        trip = math.dist(position, station["xyz_m"])
+        arrival = time_s + max(1, math.ceil(trip / transfer_speed))
+        station.update(arrival_s=arrival, capture_s=arrival + 1)
+        ordered.append(station)
+        time_s, position = station["capture_s"], station["xyz_m"]
+    return dict(
+        start_s=start_s,
+        start_xyz_m=start_xyz,
+        end_s=time_s,
+        stations=ordered,
+        patches=patches,
+        radius_m=radius_m,
+        strategy="dynamic_route_value",
+    )
+
+
+def refine_ground_iterative(grid, baseline, point_views, camera_origins, slope_limit, survey, max_passes=4):
+    """Iteratively propagate verified oblique ground planes across multi-cell canopy gaps.
+
+    Every promoted cell satisfies the exact same strict 4-quarter multi-view oblique,
+    body-clearance, spread, and slope constraints as `refine_ground`, using only the
+    already-captured oblique sensor frames.
+    """
+    current = {name: value.copy() for name, value in baseline.items()}
+    total_promoted = np.zeros(grid.shape, dtype=bool)
+    base_obs_views = current["observed_views"].copy()
+    added_obs_views = np.zeros(grid.shape, dtype=np.uint16)
+    for pass_idx in range(max(1, int(max_passes))):
+        updated = refine_ground(grid, current, point_views, camera_origins, slope_limit, survey)
+        if pass_idx == 0:
+            added_obs_views = updated["observed_views"] - base_obs_views
+        else:
+            # Avoid double-counting observed_views across boundary propagation passes.
+            updated["observed_views"] = base_obs_views + added_obs_views
+        promoted_now = updated["refined_ground"]
+        total_promoted |= promoted_now
+        current = updated
+        if not np.any(promoted_now):
+            break
+    current["refined_ground"] = total_promoted
+    return current, total_promoted

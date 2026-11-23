@@ -13,6 +13,7 @@ for rel in ("controllers/uav_mapper", "controllers/uav_map_rover", "controllers/
 
 from aerial_victims import AerialVictimTracker
 from rescue_mission import confirm_victim_onboard, plan_next_victim, select_victim_approach_point
+from route_tracker import OnboardObstacleMap
 from survey_map import BLOCKED, FREE, Grid, UNKNOWN
 from vctp import FineTerrainSurface, VctpChecker
 
@@ -178,6 +179,48 @@ class TestUavRescue(unittest.TestCase):
         for i in range(len(v1)):
             for j in range(i + 1, len(v1)):
                 self.assertGreaterEqual(math.dist(v1[i]["xy"], v1[j]["xy"]), 7.5)
+
+    def test_victim_no_runover_exclusion_and_near_side_approach(self):
+        grid = Grid(origin=np.array([0.0, 0.0]), resolution=0.5, shape=(32, 32))
+        states = np.full(grid.shape, FREE, dtype=np.int8)
+        cost = np.ones(grid.shape, dtype=float)
+        fine_grid = Grid(origin=grid.origin, resolution=0.125, shape=(grid.shape[0] * 4, grid.shape[1] * 4))
+        fine_z = np.zeros(fine_grid.shape, dtype=float)
+        vctp = VctpChecker(FineTerrainSurface(fine_grid, fine_z, grid, states))
+
+        victim_a = [6.0, 8.0]
+        victim_b = [12.0, 8.0]
+        # Approaching victim A from the west must choose a west-side approach point (x < 6.0).
+        leg_a = select_victim_approach_point(
+            grid, states, cost,
+            start_xy=(2.0, 8.0), victim_xy=victim_a,
+            rover_radius_m=0.35, vctp=vctp, planner_mode="igha_vctp",
+            exclude_victims_xy=[victim_a, victim_b],
+        )
+        self.assertEqual(leg_a["status"], "PLANNED")
+        self.assertLess(leg_a["approach_xy_m"][0], victim_a[0])
+        self.assertGreaterEqual(leg_a["standoff_m"], 1.05)
+
+        # Departing from the west of victim A toward victim B (due east) must route around victim A.
+        leg_b = select_victim_approach_point(
+            grid, states, cost,
+            start_xy=leg_a["approach_xy_m"], victim_xy=victim_b,
+            rover_radius_m=0.35, vctp=vctp, planner_mode="igha_vctp",
+            exclude_victims_xy=[victim_a, victim_b],
+        )
+        self.assertEqual(leg_b["status"], "PLANNED")
+        route_b = np.asarray(leg_b["route_xy_m"], dtype=float)
+        min_dist_to_a = float(np.min(np.linalg.norm(route_b - np.asarray(victim_a), axis=1)))
+        self.assertGreaterEqual(min_dist_to_a, 0.85)
+
+        # Protected onboard victim zone must not be erased by dynamic-obstacle stale clearing.
+        omap = OnboardObstacleMap(grid, states, np.zeros(grid.shape, dtype=float), cost, rover_radius_m=0.35)
+        added = omap.mark_no_runover_zone(victim_a, radius_m=0.68, keep_clear_xy=leg_a["approach_xy_m"], keep_clear_radius_m=0.50)
+        self.assertGreater(added, 0)
+        empty = np.empty((0, 2), dtype=float)
+        for _ in range(30):
+            omap.update(leg_a["approach_xy_m"], empty, empty)
+        self.assertTrue(omap.fine_onboard_blocked[omap.fine_grid.cell(victim_a)])
 
 
 if __name__ == "__main__":

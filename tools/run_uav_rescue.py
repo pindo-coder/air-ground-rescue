@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 from aerial_products import export_products
 from build_search_worlds import replace_node
 from metrics import height_at
+from posture_casualty import ALL_POSTURES, NON_SUPINE_POSTURES, build_posture_casualty_vrml
 from run_search import ROOT, executable_path, simulator_has_errors
 from run_uav_mapping import PROFILES, refinement_metrics, survey_metrics
 from run_uav_navigation import OBSTACLE_PRESETS, build_nav_world
@@ -60,7 +61,7 @@ def _terrain_slope_deg(terrain, x, y, delta=0.45):
     return math.degrees(math.atan(math.hypot(dx, dy)))
 
 
-def sample_random_victims_d(config, seed, count=3, random_clothing=False):
+def sample_random_victims_d(config, seed, count=3, random_clothing=False, postures=None):
     """Sample valid, non-overlapping random victim poses inside the survey bounds (offline world-gen only)."""
     terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8"))
     base_b = json.loads((ROOT / "evaluation/scenarios/B.json").read_text(encoding="utf-8"))
@@ -78,6 +79,7 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
 
     victims = []
     min_pair = 4.0 if (bx1 - bx0) <= 25 else 7.5
+    posture_seq = list(postures) if postures else ["supine"] * count
     for idx in range(1, count + 1):
         chosen = None
         for _ in range(1200):
@@ -102,10 +104,12 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
             raise RuntimeError(f"Failed to sample valid random victim #{idx} for seed={seed}")
         color_name, shirt_rgb = rng.choice(RANDOM_SHIRT_COLORS) if random_clothing else ("default_blue", None)
         pants_rgb = rng.choice(RANDOM_PANTS_COLORS) if random_clothing else None
+        posture = posture_seq[(idx - 1) % len(posture_seq)]
         victims.append(dict(
             id=idx,
             xy=list(chosen),
             yaw_rad=round(rng.uniform(-math.pi, math.pi), 4),
+            posture=posture,
             shirt_name=color_name,
             shirt_rgb=shirt_rgb,
             pants_rgb=pants_rgb,
@@ -114,9 +118,8 @@ def sample_random_victims_d(config, seed, count=3, random_clothing=False):
 
 
 def apply_random_victims_to_world(world_path, victims, terrain):
-    """Replace the 3 victim Solid nodes in the temporary validation world with randomized placements."""
+    """Replace victim Solid nodes in the temporary validation world with randomized placements & postures."""
     scene = world_path.read_text(encoding="utf-8")
-    # Remove the 3 default victim nodes from the temporary world.
     for pat in (
         r"\bDEF\s+CASUALTY\s+Solid",
         r"\bDEF\s+SEARCH_VICTIM_2\s+Solid",
@@ -127,31 +130,14 @@ def apply_random_victims_to_world(world_path, victims, terrain):
 
     for idx, v in enumerate(victims, 1):
         vkey = ("A", "B", "C")[(idx - 1) % 3]
-        el = RescueElements(dict(key=vkey, seed=900 + idx * 31, goal=v["xy"]),
-                            lambda x, y: height_at(terrain, x, y))
-        el.casualty()
-        node = el.nodes[0]
+        posture = v.get("posture", "supine")
         def_name = "CASUALTY" if idx == 1 else f"SEARCH_VICTIM_{idx}"
-        node = node.replace("DEF CASUALTY ", f"DEF {def_name} ", 1)
-        node = node.replace('name "casualty"', f'name "search victim {idx}"', 1)
-        # Apply randomized yaw via ground_frame rotation directly on the outer Solid node.
-        from scene_elements import axis_angle, ground_frame
-        rot = axis_angle(ground_frame(v["xy"][0], v["xy"][1], v["yaw_rad"],
-                                      lambda x, y: height_at(terrain, x, y)))
-        rot_str = " ".join(f"{val:.6f}" for val in rot)
-        node = re.sub(r"rotation\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                      f"rotation {rot_str}", node, count=1)
-        if v.get("shirt_rgb"):
-            lines = []
-            for line in node.splitlines():
-                if "_shirt.obj" in line:
-                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                                  f"baseColor {v['shirt_rgb']}", line, count=1)
-                elif "_pants.obj" in line and v.get("pants_rgb"):
-                    line = re.sub(r"baseColor\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+",
-                                  f"baseColor {v['pants_rgb']}", line, count=1)
-                lines.append(line)
-            node = "\n".join(lines)
+        node = build_posture_casualty_vrml(
+            def_name, f"search victim {idx} ({posture})",
+            v["xy"], v["yaw_rad"], lambda x, y: height_at(terrain, x, y),
+            posture=posture, mesh_key=vkey,
+            shirt_rgb=v.get("shirt_rgb"), pants_rgb=v.get("pants_rgb"),
+        )
         scene += "\n" + node + "\n"
     world_path.write_text(scene, encoding="utf-8")
 
@@ -163,6 +149,12 @@ def draw_rescue_preview(folder, eval_summary, rover_status, victims_doc):
     cells = np.zeros((*states.shape, 3), dtype=np.uint8)
     for state, color in palette.items():
         cells[states == state] = color
+    dyn_ref = rover_status.get("dynamic_refinement") or {}
+    for rec in dyn_ref.get("history", []):
+        for xy in rec.get("newly_freed_xy_m", []):
+            rc = grid.cell(xy)
+            if grid.contains(rc):
+                cells[rc] = (86, 224, 180)
     for item in rover_status.get("onboard_blocked_cells", []):
         r, c = item["row"], item["col"]
         if 0 <= r < states.shape[0] and 0 <= c < states.shape[1]:
@@ -347,7 +339,10 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
     cv2.rectangle(base_pip, (0, 0), (pip_w - 1, pip_h - 1), (210, 225, 235), 2)
 
     out_w, out_h = 1280, 720
-    fps = max(5.0, 5.0 * float(video_speed))
+    hold_repeat = 2 if float(video_speed) <= 1.2 else 1
+    fps = max(5.0, 5.0 * float(video_speed) * hold_repeat)
+    speed_label_cn = "1倍速实时" if abs(float(video_speed) - 1.0) < 0.05 else f"{video_speed:.0f}倍速"
+    speed_tag_short = "1倍速实时" if abs(float(video_speed) - 1.0) < 0.05 else f"{video_speed:.0f}x"
     video_path = folder / "evaluation/rescue_simulation.mp4"
     writer = None
     used_codec = None
@@ -377,6 +372,7 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         "FACE_VICTIM": "转向正对伤员",
         "VERIFY_AND_DELIVER": "抵近停稳复核",
         "DELIVERED": "完成物资投送",
+        "WAITING_UAV_REFINEMENT": "呼叫无人机实时补拍",
         "ARRIVED": "到达停稳",
         "STOPPED_SAFE": "安全停车",
     }
@@ -409,7 +405,7 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
             dframe = cv2.addWeighted(overlay, 0.74, dframe, 0.26, 0.0)
             hud_uav = (
                 f"阶段一：无人机航测建图与纯 YOLO 空中搜寻 | "
-                f"仿真时间 {idx * 0.2:.1f} s（{video_speed:.0f}倍速）| 第三人称跟飞 + 机腹下视"
+                f"仿真时间 {idx * 0.2:.1f} s（{speed_label_cn}）| 第三人称跟飞 + 机腹下视"
             )
             captions = []
             if nadir_files:
@@ -423,8 +419,9 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
                     dframe[ny0:ny0 + nh, nx0:nx0 + nw] = nimg
                     captions.append((nx0 + 2, ny0 - 26, "无人机机腹下视航拍"))
             dframe = draw_cn_labels(dframe, hud_uav, captions)
-            writer.write(dframe)
-            written += 1
+            for _ in range(hold_repeat):
+                writer.write(dframe)
+                written += 1
 
     # Phase 2: Rover driving & rescue video + live Rover FPV PiP + live UAV Mini-Map PiP.
     fpv_dir = folder / "rover/fpv_frames"
@@ -443,10 +440,12 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         cv2.rectangle(overlay, (0, 0), (out_w, 54), (16, 24, 34), -1)
         frame = cv2.addWeighted(overlay, 0.74, frame, 0.26, 0.0)
         st_cn = state_cn_map.get(row["state"], row["state"])
+        cap = int(eval_summary["cargo_capacity"])
+        rem_cargo = max(0, cap - int(row["delivered"]))
         hud1 = (
-            f"阶段二：四轮车纯 YOLO + VCTP/IGHA* + {local_tag} | "
-            f"t={row['time_s']:.1f} s（{video_speed:.0f}x）| 车速 {row['speed']:.2f} m/s | "
-            f"已投送 {row['delivered']}/{eval_summary['cargo_capacity']} | {st_cn}"
+            f"阶段二：三仓四轮车纯 YOLO + VCTP/IGHA* + {local_tag} | "
+            f"t={row['time_s']:.1f} s（{speed_tag_short}）| 车速 {row['speed']:.2f} m/s | "
+            f"已投送 {row['delivered']}/{cap}（余仓{rem_cargo}）| {st_cn}"
         )
         captions = []
 
@@ -472,8 +471,9 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
         captions.append((x0 + 2, y0 - 26, "无人机通行图 + 小车实时轨迹"))
 
         frame = draw_cn_labels(frame, hud1, captions)
-        writer.write(frame)
-        written += 1
+        for _ in range(hold_repeat):
+            writer.write(frame)
+            written += 1
 
     writer.release()
     if written > 0 and video_path.is_file() and video_path.stat().st_size > 1024:
@@ -512,15 +512,63 @@ def assemble_rescue_video(folder, rover_status, victims_doc, eval_summary, video
     return None
 
 
+WEATHER_PRESETS = {
+    "clear": None,
+    "lowlight": dict(
+        luminosity=0.22,
+        fog_color="0.14 0.17 0.22",
+        fog_range=110.0,
+        sun_intensity=0.36,
+        sun_ambient=0.10,
+        fill_intensity=0.16,
+    ),
+    "fog": dict(
+        luminosity=0.64,
+        fog_color="0.72 0.76 0.78",
+        fog_range=38.0,
+        sun_intensity=0.80,
+        sun_ambient=0.22,
+        fill_intensity=0.45,
+    ),
+}
+
+
+def apply_weather_to_world(world_path, weather):
+    """Apply realistic Webots Fog & DirectionalLight weather degradation to a temporary world."""
+    spec = WEATHER_PRESETS.get(weather)
+    if not spec:
+        return
+    scene = world_path.read_text(encoding="utf-8")
+    scene = re.sub(r"(\bluminosity\s+)[0-9.]+", rf"\g<1>{spec['luminosity']}", scene, count=1)
+    scene = re.sub(
+        r"Fog\s*\{[^}]*\}",
+        f"Fog {{\n  color {spec['fog_color']}\n  visibilityRange {spec['fog_range']}\n}}",
+        scene, count=1,
+    )
+    lights = list(re.finditer(r"DirectionalLight\s*\{[^}]*\}", scene))
+    if len(lights) >= 1:
+        b0 = lights[0].group(0)
+        b0_new = re.sub(r"(\bintensity\s+)[0-9.]+", rf"\g<1>{spec['sun_intensity']}", b0)
+        b0_new = re.sub(r"(\bambientIntensity\s+)[0-9.]+", rf"\g<1>{spec['sun_ambient']}", b0_new)
+        scene = scene[:lights[0].start()] + b0_new + scene[lights[0].end():]
+    lights = list(re.finditer(r"DirectionalLight\s*\{[^}]*\}", scene))
+    if len(lights) >= 2:
+        b1 = lights[1].group(0)
+        b1_new = re.sub(r"(\bintensity\s+)[0-9.]+", rf"\g<1>{spec['fill_intensity']}", b1)
+        scene = scene[:lights[1].start()] + b1_new + scene[lights[1].end():]
+    world_path.write_text(scene, encoding="utf-8")
+
+
 def run(profile="full", detector="yolo", planner="igha_vctp",
-        max_victims=2, refinement_strategy="route_value", nadir_only=False,
-        victim_seed=None, random_clothing=False,
+        max_victims=3, refinement_strategy="route_value", nadir_only=False,
+        victim_seed=None, random_clothing=False, postures=None, weather="clear",
         local_policy="rule", checkpoint=None,
         obstacle="none", map_from=None, visible=False, realtime=False,
         keep_open=False, record_video=False, video_speed=4.0,
-        port=18578, timeout=360.0):
-    if victim_seed is not None and map_from is not None:
-        raise ValueError("--victim-seed / --random-victims requires a fresh UAV survey (omit --map-from).")
+        dynamic_refinement=False,
+        port=18578, timeout=480.0):
+    if (victim_seed is not None or postures) and map_from is not None:
+        raise ValueError("--victim-seed / --postures requires a fresh UAV survey (omit --map-from).")
     if local_policy == "neural" and not checkpoint:
         raise ValueError("--checkpoint is required when --local-policy neural.")
     checkpoint_path = Path(checkpoint).resolve() if checkpoint else None
@@ -534,8 +582,9 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
     injected = [] if obstacle == "none" else OBSTACLE_PRESETS[(profile, obstacle)]
     obs_tag = "clear" if obstacle == "none" else obstacle
     rand_tag = f"_randv{victim_seed}" if victim_seed is not None else ""
+    wx_tag = f"_{weather}" if weather and weather != "clear" else ""
 
-    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}{rand_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    run_id = f"uav_rescue_D_{profile}_{detector}_{planner}_{obs_tag}{rand_tag}{wx_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
     folder = ROOT / "runs" / run_id
     folder.mkdir(parents=True)
     (folder / "map_config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -568,13 +617,31 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
             print(f"[Run rescue] Found {len(av_doc['candidates'])} multi-view aerial candidate(s).", flush=True)
 
     world = ROOT / "worlds" / f"_validation_{run_id}.wbt"
-    build_nav_world(world, config, injected, reuse_map=reuse_map)
+    build_nav_world(world, config, injected, reuse_map=reuse_map, dynamic_refinement=dynamic_refinement)
+    if weather and weather != "clear":
+        apply_weather_to_world(world, weather)
+        print(f"[Run rescue] Applied Webots weather degradation: {weather}.", flush=True)
     randomized_victims = None
-    if victim_seed is not None:
-        v_count = 2 if profile == "local" else 3
-        randomized_victims, terrain = sample_random_victims_d(
-            config, seed=victim_seed, count=v_count, random_clothing=random_clothing,
-        )
+    if victim_seed is not None or postures:
+        if victim_seed is not None:
+            v_count = len(postures) if postures else (2 if profile == "local" else 3)
+            randomized_victims, terrain = sample_random_victims_d(
+                config, seed=victim_seed, count=v_count,
+                random_clothing=random_clothing, postures=postures,
+            )
+        else:
+            # Replace the 3 default Scene D victim poses in-place with specified postures!
+            terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8"))
+            rng_p = random.Random(71)
+            randomized_victims = []
+            for idx, tv in enumerate(terrain["victims"], 1):
+                p_name = postures[(idx - 1) % len(postures)]
+                cname, srgb = rng_p.choice(RANDOM_SHIRT_COLORS) if random_clothing else ("default_blue", None)
+                prgb = rng_p.choice(RANDOM_PANTS_COLORS) if random_clothing else None
+                randomized_victims.append(dict(
+                    id=tv["id"], xy=list(tv["xy"]), yaw_rad=float(tv.get("yaw", 0.0)),
+                    posture=p_name, shirt_name=cname, shirt_rgb=srgb, pants_rgb=prgb,
+                ))
         apply_random_victims_to_world(world, randomized_victims, terrain)
         eval_dir = folder / "evaluation"
         eval_dir.mkdir(parents=True, exist_ok=True)
@@ -582,14 +649,16 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         (eval_dir / "truth_override.json").write_text(
             json.dumps(dict(
                 evaluation_only=True,
-                victim_seed=int(victim_seed),
+                victim_seed=int(victim_seed) if victim_seed is not None else None,
                 random_clothing=bool(random_clothing),
+                postures=[v["posture"] for v in randomized_victims],
                 victims=randomized_victims,
             ), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         print(
-            f"[Run rescue] Spawned {len(randomized_victims)} randomized victim(s) (seed={victim_seed}, "
+            f"[Run rescue] Spawned {len(randomized_victims)} victim(s) "
+            f"(seed={victim_seed}, postures={[v['posture'] for v in randomized_victims]}, "
             f"random_clothing={random_clothing}); truth kept evaluator-only.",
             flush=True,
         )
@@ -619,6 +688,8 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         UAV_NAV_KEEP_OPEN="1" if keep_open else "0",
         UAV_RECORD_VIDEO="1" if record_video else "0",
         UAV_VIDEO_SPEED=str(video_speed),
+        UAV_DYNAMIC_REFINEMENT="1" if dynamic_refinement else "0",
+        UAV_DYNAMIC_STANDBY_ONLY="1" if (dynamic_refinement and reuse_map) else "0",
         PYTHONDONTWRITEBYTECODE="1",
     )
 
@@ -702,9 +773,11 @@ def main():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--detector", choices=("yolo", "surrogate_rgbd"), default="yolo")
     parser.add_argument("--planner", choices=("igha_vctp", "astar"), default="igha_vctp")
-    parser.add_argument("--max-victims", type=int, default=2,
-                        help="Maximum number of supply crates / victims to visit in one sortie (default: 2).")
+    parser.add_argument("--max-victims", type=int, default=3,
+                        help="Maximum number of supply crates / victims to visit in one sortie (default: 3).")
     parser.add_argument("--refinement-strategy", choices=("density", "route_value"), default="route_value")
+    parser.add_argument("--dynamic-refinement", action="store_true",
+                        help="Enable mid-mission rover-to-UAV oblique refinement to unlock unreachable victims.")
     parser.add_argument("--nadir-only", action="store_true",
                         help="Skip oblique refinement pass for faster fresh-flight runs.")
     parser.add_argument("--random-victims", action="store_true",
@@ -713,6 +786,10 @@ def main():
                         help="Explicit integer seed for randomized victim spawning in Scene D.")
     parser.add_argument("--random-clothing", action="store_true",
                         help="Also randomize victim shirt & pants colors when spawning random victims.")
+    parser.add_argument("--postures", nargs="+", choices=ALL_POSTURES, default=None,
+                        help="Explicit disaster postures for victims (e.g. prone side curled seated half_buried).")
+    parser.add_argument("--weather", choices=("clear", "lowlight", "fog"), default="clear",
+                        help="Webots weather/lighting stress preset: clear, lowlight dusk, or dense valley fog.")
     parser.add_argument("--local-policy", choices=("rule", "neural"), default="rule",
                         help="Onboard rover local planner: rule baseline or neural network checkpoint.")
     parser.add_argument("--checkpoint", default=None,
@@ -728,7 +805,7 @@ def main():
     parser.add_argument("--video-speed", type=float, default=4.0,
                         help="Playback speedup factor for recorded simulation video (default: 4.0x).")
     parser.add_argument("--port", type=int, default=18578)
-    parser.add_argument("--timeout", type=float, default=360.0)
+    parser.add_argument("--timeout", type=float, default=480.0)
     args = parser.parse_args()
     vseed = args.victim_seed
     if args.random_victims and vseed is None:
@@ -742,6 +819,8 @@ def main():
         nadir_only=args.nadir_only,
         victim_seed=vseed,
         random_clothing=args.random_clothing,
+        postures=args.postures,
+        weather=args.weather,
         local_policy=args.local_policy,
         checkpoint=args.checkpoint,
         obstacle=args.obstacle,
@@ -751,6 +830,7 @@ def main():
         keep_open=args.keep_open,
         record_video=args.record_video,
         video_speed=args.video_speed,
+        dynamic_refinement=args.dynamic_refinement,
         port=args.port,
         timeout=args.timeout,
     )

@@ -12,6 +12,7 @@ from controller import Robot
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "controllers/uav_mapper"))
 from survey_map import load_prior
+from survey_refinement import select_dynamic_patches
 from grid_route import direct_line_cells, plan, plan_dual
 from igha_star import plan_igha_star
 from route_tracker import (
@@ -184,12 +185,20 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
             expert_mix=float(os.environ.get("UAV_LOCAL_EXPERT_MIX", "0")),
             seed=int(os.environ.get("UAV_LOCAL_SEED", "17")),
         )
+    dynamic_refinement_enabled = os.environ.get("UAV_DYNAMIC_REFINEMENT") == "1"
     controller = RouteNavigationController(
         onboard_map=onboard_map,
         initial_route_xy=selected_route["route_xy_m"],
         goal_xy=selected_route["goal_xy_m"],
         local_planner=experiment,
+        dynamic_refinement_enabled=dynamic_refinement_enabled,
+        max_refinement_requests=int(os.environ.get("UAV_DYNAMIC_REFINEMENT_MAX", "2")),
+        min_detour_saving_m=float(os.environ.get("UAV_DYNAMIC_REFINEMENT_MIN_SAVING_M", "4.5")),
     )
+    req_file = folder / "dynamic_refinement_request.json"
+    resp_file = folder / "dynamic_refinement_response.json"
+    map_file = folder / "uav_map.npz"
+    handled_response_id = 0
 
     drive_start_s = robot.getTime()
     nav_budget_s = float(os.environ.get("UAV_NAV_TIMEOUT_S", "240"))
@@ -261,6 +270,48 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
                     replan_count=controller.report.replan_count,
                 )))
 
+                if controller.pending_refinement_request is not None:
+                    req_doc = controller.pending_refinement_request
+                    controller.pending_refinement_request = None
+                    _write_json_atomic(req_file, req_doc)
+                    nav_deadline_s += 55.0
+                    rgb_cam.saveImage(str(rover_dir / f"uav_refinement_req_{req_doc['request_id']:02d}.jpg"), 90)
+                    print(
+                        f"[Map rover] Blocked -> requested live UAV refinement #{req_doc['request_id']} "
+                        f"at t={now:.1f}s ({len(req_doc['patches'])} patch(es), trigger={req_doc['trigger_reason']}).",
+                        flush=True,
+                    )
+
+                if controller.state == "WAITING_UAV_REFINEMENT" and resp_file.is_file():
+                    try:
+                        resp_doc = json.loads(resp_file.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        resp_doc = None
+                    if resp_doc and int(resp_doc.get("request_id", 0)) == controller.active_refinement_id and int(resp_doc["request_id"]) > handled_response_id:
+                        handled_response_id = int(resp_doc["request_id"])
+                        with np.load(map_file, allow_pickle=False) as refined_data:
+                            new_states = refined_data["states"].copy()
+                            new_gz = refined_data["ground_z_m"].copy()
+                            new_cost = (refined_data["planning_cost"].copy()
+                                        if "planning_cost" in refined_data and "max_slope_deg" in settings else None)
+                        layers["ground_z_m"] = new_gz
+                        if new_cost is not None:
+                            layers["planning_cost"] = new_cost
+                        obs_enu_now = (
+                            np.vstack((lidar_enu, rgbd_enu)) if (len(lidar_enu) and len(rgbd_enu))
+                            else (lidar_enu if len(lidar_enu) else rgbd_enu)
+                        )
+                        unlocked = controller.apply_uav_refinement(
+                            now, pose_xyz[:2], obs_enu_now, new_states, new_gz, new_cost, response_meta=resp_doc,
+                        )
+                        rgb_cam.saveImage(str(rover_dir / f"after_uav_refinement_{handled_response_id:02d}.jpg"), 90)
+                        print(
+                            f"[Map rover] Applied UAV refinement #{handled_response_id} at t={now:.1f}s: "
+                            f"newly_freed={resp_doc.get('newly_freed_cells', 0)}, unlocked={unlocked}, "
+                            f"state={controller.state}.",
+                            flush=True,
+                        )
+
                 if controller.report.replan_count > last_replan_seen:
                     last_replan_seen = controller.report.replan_count
                     rgb_cam.saveImage(str(rover_dir / f"replan_{last_replan_seen:02d}.jpg"), 90)
@@ -319,6 +370,15 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
             for r, c in map(tuple, np.argwhere(onboard_map.onboard_blocked))
         ],
         routes_history=controller.route_history,
+        dynamic_refinement=(dict(
+            enabled=dynamic_refinement_enabled,
+            requests=controller.refinement_requests_sent,
+            unlocked_count=sum(1 for r in controller.refinement_history if r.get("unlocked")),
+            total_newly_freed_cells=sum(int(r.get("newly_freed_cells", 0)) for r in controller.refinement_history),
+            total_uav_frames=sum(int(r.get("frames_captured", 0)) for r in controller.refinement_history),
+            total_uav_flight_s=round(sum(float(r.get("flight_duration_s", 0.0)) for r in controller.refinement_history), 3),
+            history=controller.refinement_history,
+        ) if dynamic_refinement_enabled else None),
     )
     if experiment:
         status_payload["local_policy"] = experiment.close(controller.report.status)
@@ -346,6 +406,7 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
 
     victims_doc = json.loads(victims_file.read_text(encoding="utf-8"))
     remaining = list(victims_doc.get("candidates", []))
+    known_victims_xy = {v["id"]: list(v["mean_enu_m"]) for v in remaining}
     detector_mode = os.environ.get("UAV_RESCUE_DETECTOR", victims_doc.get("detector", "surrogate_rgbd"))
     common = json.loads((ROOT / "config/search/common.json").read_text(encoding="utf-8"))
     score_min = float(common["detection_score_min"][detector_mode])
@@ -447,6 +508,13 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
     overall_status = "COMPLETED"
     stop_reason = None
     tick = 0
+    dynamic_refinement_enabled = os.environ.get("UAV_DYNAMIC_REFINEMENT") == "1"
+    max_dyn_reqs = int(os.environ.get("UAV_DYNAMIC_REFINEMENT_MAX", "3"))
+    dyn_req_count = 0
+    dyn_ref_history = []
+    dyn_requested_centers = []
+    dyn_req_file = folder / "dynamic_refinement_request.json"
+    dyn_resp_file = folder / "dynamic_refinement_response.json"
 
     def publish_state(state_name, active_victim_id=None):
         robot.setCustomData(json.dumps(dict(
@@ -478,8 +546,108 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     estimator.xyz[:2], estimator.yaw,
                     remaining, settings["rover_radius_m"],
                     vctp=vctp, planner_mode=planner_mode,
+                    exclude_victims_xy=list(known_victims_xy.values()),
                 )
                 if chosen is None:
+                    # If dynamic mid-mission UAV refinement is enabled, check whether an unreachable
+                    # remaining victim can be unlocked via targeted oblique refinement of its UNKNOWN corridor.
+                    unlocked_via_uav = False
+                    if dynamic_refinement_enabled and dyn_req_count < max_dyn_reqs:
+                        opt_plans = [
+                            p for p in all_plans
+                            if (p.get("dual_route") or {}).get("optimistic_status") == "PLANNED"
+                            and p.get("approach_xy_m") is not None
+                        ]
+                        opt_plans.sort(key=lambda p: float(p["dual_route"]["optimistic_length_m"]))
+                        for op in opt_plans:
+                            goal_try = op["approach_xy_m"]
+                            patches, dual_sum = select_dynamic_patches(
+                                grid,
+                                onboard_map.coarse_effective_states,
+                                onboard_map.ground_z_m,
+                                estimator.xyz[:2],
+                                goal_try,
+                                settings["rover_radius_m"],
+                                planning_cost=layers.get("planning_cost") if "max_slope_deg" in settings else None,
+                                patch_radius_m=3.5,
+                                max_patches=2,
+                                exclude_centers=dyn_requested_centers,
+                            )
+                            if not patches:
+                                continue
+                            dyn_req_count += 1
+                            req_id = dyn_req_count
+                            for ptc in patches:
+                                dyn_requested_centers.append(tuple(ptc["xy_m"]))
+                            req_doc = dict(
+                                request_id=req_id,
+                                created_s=round(float(robot.getTime()), 3),
+                                trigger_reason=f"RESCUE_VICTIM_{op['victim_candidate']['id']}_UNKNOWN_CORRIDOR",
+                                rover_xy_m=[round(float(estimator.xyz[0]), 3), round(float(estimator.xyz[1]), 3)],
+                                goal_xy_m=[round(float(goal_try[0]), 3), round(float(goal_try[1]), 3)],
+                                patches=patches,
+                                dual_summary=dual_sum,
+                            )
+                            _write_json_atomic(dyn_req_file, req_doc)
+                            nav_deadline_s += 75.0
+                            print(
+                                f"[Map rover] Victim #{op['victim_candidate']['id']} behind UNKNOWN corridor -> "
+                                f"requested live UAV refinement #{req_id} ({len(patches)} patch(es)).",
+                                flush=True,
+                            )
+                            # Hold safely in place until UAV finishes oblique refinement & updates uav_map.npz.
+                            resp_doc = None
+                            while robot.step(period_ms) != -1:
+                                for motor in motors:
+                                    motor.setVelocity(0.0)
+                                g = np.asarray(gps.getValues(), dtype=float)
+                                rpy = np.asarray(imu.getRollPitchYaw(), dtype=float)
+                                wheels = np.asarray([enc.getValue() for enc in encoders], dtype=float)
+                                estimator.update(g, rpy, wheels, dt, grid, layers["ground_z_m"])
+                                publish_state("WAITING_UAV_REFINEMENT", op["victim_candidate"]["id"])
+                                maybe_record_rover_cams()
+                                if dyn_resp_file.is_file():
+                                    try:
+                                        cand_resp = json.loads(dyn_resp_file.read_text(encoding="utf-8"))
+                                    except (OSError, json.JSONDecodeError):
+                                        cand_resp = None
+                                    if cand_resp and int(cand_resp.get("request_id", 0)) == req_id:
+                                        resp_doc = cand_resp
+                                        break
+                                if robot.getTime() >= nav_deadline_s:
+                                    break
+                            if resp_doc is not None:
+                                with np.load(map_file, allow_pickle=False) as refined_data:
+                                    new_states = refined_data["states"].copy()
+                                    new_gz = refined_data["ground_z_m"].copy()
+                                    new_cost = (refined_data["planning_cost"].copy()
+                                                if "planning_cost" in refined_data and "max_slope_deg" in settings else None)
+                                states = new_states
+                                layers["ground_z_m"] = new_gz
+                                if new_cost is not None:
+                                    layers["planning_cost"] = new_cost
+                                newly_freed = onboard_map.merge_uav_refinement(new_states, new_gz, new_cost)
+                                if vctp is not None:
+                                    vctp = VctpChecker(FineTerrainSurface.from_uav_map(map_file))
+                                dyn_ref_history.append(dict(
+                                    request_id=req_id,
+                                    target_victim_id=op["victim_candidate"]["id"],
+                                    completed_s=round(float(robot.getTime()), 3),
+                                    newly_freed_cells=int(newly_freed),
+                                    frames_captured=int(resp_doc.get("frames_captured", 0)),
+                                    flight_duration_s=float(resp_doc.get("flight_duration_s", 0.0)),
+                                    patches=patches,
+                                    newly_freed_xy_m=resp_doc.get("newly_freed_xy_m", []),
+                                ))
+                                print(
+                                    f"[Map rover] UAV refinement #{req_id} done: unlocked {newly_freed} new FREE cells; "
+                                    f"re-checking reachability for victim #{op['victim_candidate']['id']}.",
+                                    flush=True,
+                                )
+                                unlocked_via_uav = True
+                            break
+                    if unlocked_via_uav:
+                        continue
                     overall_status = "STOPPED_SAFE"
                     stop_reason = "NO_REACHABLE_DETECTED_VICTIM_ON_CONFIRMED_TERRAIN"
                     break
@@ -502,6 +670,8 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     local_planner=experiment,
                     settle_time_s=0.4,  # We perform full face-victim + 2.2 s settle right after arrival.
                     goal_tolerance_m=0.28,
+                    victim_ignore_xy=victim["mean_enu_m"],
+                    victim_ignore_radius_m=0.80,
                 )
                 target_xy = np.asarray(victim["mean_enu_m"], dtype=float)
                 leg_start_s = robot.getTime()
@@ -671,6 +841,13 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     sources=sources,
                 )
                 rescue_events.extend([report_event, delivery_event])
+                known_victims_xy[vid] = list(report_xy)
+                onboard_map.mark_no_runover_zone(
+                    report_xy,
+                    radius_m=0.68,
+                    keep_clear_xy=estimator.xyz[:2],
+                    keep_clear_radius_m=0.50,
+                )
                 publish_state("DELIVERED", vid)
                 for _ in range(3):
                     robot.step(period_ms)
@@ -723,6 +900,14 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
         ],
         legs=leg_records,
         routes_history=routes_history,
+        dynamic_refinement=(dict(
+            enabled=dynamic_refinement_enabled,
+            requests=dyn_req_count,
+            total_newly_freed_cells=sum(int(r.get("newly_freed_cells", 0)) for r in dyn_ref_history),
+            total_uav_frames=sum(int(r.get("frames_captured", 0)) for r in dyn_ref_history),
+            total_uav_flight_s=round(sum(float(r.get("flight_duration_s", 0.0)) for r in dyn_ref_history), 3),
+            history=dyn_ref_history,
+        ) if dynamic_refinement_enabled else None),
     )
     _write_json_atomic(rover_dir / "events.json", rescue_events)
     _write_json_atomic(rover_dir / "nav_status.json", status_payload)

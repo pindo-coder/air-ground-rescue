@@ -10,9 +10,10 @@ import heapq
 import math
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import binary_dilation, distance_transform_edt
 
 from survey_map import BLOCKED, FREE, NEIGHBORS, UNKNOWN, Grid
+from survey_refinement import select_dynamic_patches
 
 
 WHEEL_RADIUS_M = 0.09
@@ -388,7 +389,8 @@ class OnboardObstacleMap:
     """
 
     def __init__(self, grid, prior_states, ground_z_m, planning_cost, rover_radius_m,
-                 confirm_frames=2, subdiv=4, prior_margin_m=0.25, obstacle_margin_m=0.33):
+                 confirm_frames=2, subdiv=4, prior_margin_m=0.25, obstacle_margin_m=0.33,
+                 blocked_margin_m=0.36):
         self.grid = grid
         self.prior_states = np.asarray(prior_states, dtype=np.int8).copy()
         self.ground_z_m = np.asarray(ground_z_m, dtype=float).copy()
@@ -399,6 +401,7 @@ class OnboardObstacleMap:
         self.subdiv = int(subdiv)
         self.prior_margin_m = float(prior_margin_m)
         self.obstacle_margin_m = float(obstacle_margin_m)
+        self.blocked_margin_m = float(blocked_margin_m)
 
         self.fine_grid = Grid(
             grid.origin,
@@ -413,7 +416,10 @@ class OnboardObstacleMap:
             self.fine_cost = None
 
         self.confirm_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
+        self.miss_counts = np.zeros(self.fine_grid.shape, dtype=np.int16)
         self.fine_onboard_blocked = np.zeros(self.fine_grid.shape, dtype=bool)
+        self.protected_blocked = np.zeros(self.fine_grid.shape, dtype=bool)
+        self.stale_clear_ticks = 18  # 1.8 s of clear close-range LiDAR view frees vacated dynamic cells.
         self.cell_sources = {}  # fine (r, c) -> set of {"lidar", "rgbd"}
         self.coarse_sources = {}  # coarse (r, c) -> set of {"lidar", "rgbd"}
         self._dirty = True
@@ -428,6 +434,98 @@ class OnboardObstacleMap:
         return self.fine_onboard_blocked.reshape(r_n, self.subdiv, c_n, self.subdiv).any(axis=(1, 3))
 
     @property
+    def coarse_effective_states(self):
+        """Coarse-grid view combining UAV prior with confirmed onboard rover obstacles."""
+        return np.where(self.onboard_blocked, BLOCKED, self.prior_states).astype(np.int8)
+
+    def merge_uav_refinement(self, new_prior_states, new_ground_z_m, new_planning_cost=None):
+        """Incrementally merge newly UAV-verified cells while preserving all onboard rover obstacles."""
+        new_states = np.asarray(new_prior_states, dtype=np.int8)
+        new_z = np.asarray(new_ground_z_m, dtype=float)
+        if new_states.shape != self.prior_states.shape:
+            raise ValueError("Refined UAV map shape does not match existing grid.")
+        promoted_free = (self.prior_states == UNKNOWN) & (new_states == FREE)
+        newly_blocked = (self.prior_states == UNKNOWN) & (new_states == BLOCKED)
+        changed = promoted_free | newly_blocked
+        if np.any(changed):
+            self.prior_states[promoted_free] = FREE
+            self.prior_states[newly_blocked] = BLOCKED
+            z_valid = promoted_free & np.isfinite(new_z)
+            self.ground_z_m[z_valid] = new_z[z_valid]
+            if self.planning_cost is not None and new_planning_cost is not None:
+                c_arr = np.asarray(new_planning_cost, dtype=float)
+                c_valid = promoted_free & np.isfinite(c_arr)
+                self.planning_cost[c_valid] = c_arr[c_valid]
+                raw_cost = np.where(np.isfinite(self.planning_cost), self.planning_cost, 1.0)
+                self.fine_cost = np.repeat(
+                    np.repeat(raw_cost, self.subdiv, axis=0), self.subdiv, axis=1
+                ).astype(float)
+            self.fine_prior = np.repeat(
+                np.repeat(self.prior_states, self.subdiv, axis=0), self.subdiv, axis=1
+            )
+            self._dirty = True
+        return int(np.count_nonzero(promoted_free))
+
+    def seal_stuck_pinch(self, rover_xy, radius_m=3.2, dilate_fine_cells=3, safe_bubble_m=0.58):
+        """Conservatively inflate onboard obstacles around a physically stalled pinch.
+
+        Leaves a clear bubble around the rover's current pose so replanning can back out
+        and follow a newly UAV-verified wide detour instead of re-entering the tight stall.
+        """
+        rover_xy = np.asarray(rover_xy, dtype=float)
+        blocked_rc = np.argwhere(self.fine_onboard_blocked)
+        if not len(blocked_rc):
+            return 0
+        local_mask = np.zeros(self.fine_grid.shape, dtype=bool)
+        for r, c in blocked_rc:
+            center = self.fine_grid.center((int(r), int(c)))
+            if float(np.linalg.norm(center - rover_xy)) <= radius_m:
+                local_mask[r, c] = True
+        if not np.any(local_mask):
+            return 0
+        inflated = binary_dilation(local_mask, iterations=int(dilate_fine_cells))
+        new_cells = inflated & (~self.fine_onboard_blocked) & (self.fine_prior == FREE)
+        added = 0
+        for r, c in np.argwhere(new_cells):
+            center = self.fine_grid.center((int(r), int(c)))
+            if float(np.linalg.norm(center - rover_xy)) < safe_bubble_m:
+                continue
+            self.fine_onboard_blocked[r, c] = True
+            self.confirm_counts[r, c] = max(int(self.confirm_counts[r, c]), self.confirm_frames)
+            added += 1
+        if added:
+            self._dirty = True
+        return added
+
+    def mark_no_runover_zone(self, center_xy, radius_m=0.68, keep_clear_xy=None, keep_clear_radius_m=0.50):
+        """Permanently block a detected victim's footprint on the fine onboard map so the rover never drives over it."""
+        center_xy = np.asarray(center_xy[:2], dtype=float)
+        keep_xy = None if keep_clear_xy is None else np.asarray(keep_clear_xy[:2], dtype=float)
+        r0, c0 = self.fine_grid.cell(center_xy)
+        pad = max(1, math.ceil(radius_m / self.fine_grid.resolution))
+        added = 0
+        for dr in range(-pad, pad + 1):
+            for dc in range(-pad, pad + 1):
+                cell = (r0 + dr, c0 + dc)
+                if not self.fine_grid.contains(cell):
+                    continue
+                xy = self.fine_grid.center(cell)
+                if float(np.linalg.norm(xy - center_xy)) > radius_m:
+                    continue
+                if keep_xy is not None and float(np.linalg.norm(xy - keep_xy)) < keep_clear_radius_m:
+                    continue
+                if not self.fine_onboard_blocked[cell] or not self.protected_blocked[cell]:
+                    self.fine_onboard_blocked[cell] = True
+                    self.protected_blocked[cell] = True
+                    self.confirm_counts[cell] = max(int(self.confirm_counts[cell]), self.confirm_frames)
+                    self.cell_sources.setdefault(cell, set()).add("victim_zone")
+                    self.coarse_sources.setdefault((cell[0] // self.subdiv, cell[1] // self.subdiv), set()).add("victim_zone")
+                    added += 1
+        if added:
+            self._dirty = True
+        return added
+
+    @property
     def effective_states(self):
         if self._dirty or self._effective_cache is None:
             self._effective_cache = np.where(
@@ -437,15 +535,20 @@ class OnboardObstacleMap:
             prior_dist = distance_transform_edt(np.pad(prior_open, 1))[1:-1, 1:-1]
             prior_clear = self.fine_grid.resolution * (prior_dist - 0.5)
 
+            prior_non_blocked = self.fine_prior != BLOCKED
+            pb_dist = distance_transform_edt(np.pad(prior_non_blocked, 1))[1:-1, 1:-1]
+            pb_clear = self.fine_grid.resolution * (pb_dist - 0.5)
+
             obs_open = ~self.fine_onboard_blocked
             obs_dist = distance_transform_edt(np.pad(obs_open, 1))[1:-1, 1:-1]
             obs_clear = self.fine_grid.resolution * (obs_dist - 0.5)
 
-            self._clearance_cache = np.minimum(prior_clear, obs_clear)
+            self._clearance_cache = np.minimum(np.minimum(prior_clear, pb_clear), obs_clear)
             self._usable_cache = (
                 prior_open
                 & obs_open
                 & (prior_clear >= self.prior_margin_m)
+                & (pb_clear >= self.blocked_margin_m)
                 & (obs_clear >= self.obstacle_margin_m)
             )
             self._dirty = False
@@ -506,8 +609,31 @@ class OnboardObstacleMap:
                 if (r, c) not in filtered:
                     self.confirm_counts[r, c] = max(0, int(self.confirm_counts[r, c]) - 1)
 
+        # Dynamic obstacle clearing: if a previously latched onboard cell is within close 360 deg
+        # LiDAR range (0.45..2.6 m) and gets zero hits for `stale_clear_ticks`, un-latch it so a
+        # moving obstacle does not leave a permanent ghost wall across a passable corridor.
+        latched = np.argwhere(self.fine_onboard_blocked)
+        if len(latched):
+            for r, c in latched:
+                if self.protected_blocked[r, c]:
+                    continue
+                key = (int(r), int(c))
+                if key in filtered:
+                    self.miss_counts[r, c] = 0
+                    continue
+                center = self.fine_grid.center(key)
+                dist = float(np.linalg.norm(center - rover_xy))
+                if 0.45 <= dist <= 2.6:
+                    self.miss_counts[r, c] = int(self.miss_counts[r, c]) + 1
+                    if self.miss_counts[r, c] >= self.stale_clear_ticks:
+                        self.fine_onboard_blocked[r, c] = False
+                        self.confirm_counts[r, c] = 0
+                        self.miss_counts[r, c] = 0
+                        self._dirty = True
+
         newly_blocked = []
         for (r, c), sources in filtered.items():
+            self.miss_counts[r, c] = 0
             self.confirm_counts[r, c] = min(10, int(self.confirm_counts[r, c]) + 1)
             self.cell_sources.setdefault((r, c), set()).update(sources)
             self.coarse_sources.setdefault((r // self.subdiv, c // self.subdiv), set()).update(sources)
@@ -601,9 +727,10 @@ class OnboardObstacleMap:
         rover_xy = np.asarray(rover_xy, dtype=float)
         goal_xy = np.asarray(goal_xy, dtype=float)
         usable = self.usable_mask
-        # Add soft repulsion near onboard obstacles and prior boundaries so detours stay centered.
+        # Add soft repulsion near onboard obstacles and prior boundaries so detours stay centered
+        # well clear of tree trunks and rock corners rather than hugging narrow edges.
         base_cost = np.ones(self.fine_grid.shape, dtype=float) if self.fine_cost is None else self.fine_cost.copy()
-        edge_pen = np.where(self._clearance_cache < 0.50, 0.8 * (0.50 - self._clearance_cache) / 0.25, 0.0)
+        edge_pen = np.where(self._clearance_cache < 0.75, 1.6 * (0.75 - self._clearance_cache) / 0.35, 0.0)
         plan_cost = base_cost + edge_pen
 
         try:
@@ -749,6 +876,11 @@ class RuleLocalPlanner:
             return False
         if v == 0.0 and abs(w) > 0.0 and nearest < 0.28:
             return False
+        delta = inp.lookahead_xy - inp.pose_xy
+        if float(np.hypot(delta[0], delta[1])) > 0.15:
+            heading_err = wrap_angle(math.atan2(delta[1], delta[0]) - inp.yaw)
+            if abs(heading_err) > 1.05 and v > 0.03:
+                return False
         if v == 0.0 and w == 0.0:
             return True
         return self._rollout(inp, v, w, nearest, inp.onboard_map.continuous_clearance(inp.pose_xy),
@@ -876,7 +1008,9 @@ class RouteNavigationController:
 
     def __init__(self, onboard_map: OnboardObstacleMap, initial_route_xy, goal_xy,
                  local_planner=None, settle_time_s=1.5, settle_speed_mps=0.03,
-                 settle_yaw_rate=0.08, goal_tolerance_m=0.32, lookahead_m=0.80):
+                 settle_yaw_rate=0.08, goal_tolerance_m=0.32, lookahead_m=0.80,
+                 dynamic_refinement_enabled=False, max_refinement_requests=2,
+                 min_detour_saving_m=15.0, victim_ignore_xy=None, victim_ignore_radius_m=0.95):
         self.onboard_map = onboard_map
         self.route_xy = np.asarray(initial_route_xy, dtype=float).copy()
         self.route_history = [self.route_xy.tolist()]
@@ -887,18 +1021,162 @@ class RouteNavigationController:
         self.settle_yaw_rate = float(settle_yaw_rate)
         self.goal_tolerance_m = float(goal_tolerance_m)
         self.lookahead_m = float(lookahead_m)
+        self.dynamic_refinement_enabled = bool(dynamic_refinement_enabled)
+        self.max_refinement_requests = int(max_refinement_requests)
+        self.min_detour_saving_m = float(min_detour_saving_m)
+        self.victim_ignore_xy = (None if victim_ignore_xy is None
+                                 else np.asarray(victim_ignore_xy[:2], dtype=float))
+        self.victim_ignore_radius_m = float(victim_ignore_radius_m)
 
         self.waypoint_idx = 0
         self.prev_cmd = (0.0, 0.0)
         self.report = NavigationReport(status="RUNNING")
         self.state = "TRACKING"
         self.pending_stop_reason = ""
+        self.pending_refinement_request = None
+        self.active_refinement_id = None
+        self.refinement_requests_sent = 0
+        self.refinement_history = []
+        self.requested_patch_centers = []
+        self.refinement_had_fallback_route = False
 
         self.stationary_s = 0.0
         self.blocked_s = 0.0
         self.last_replan_t = -99.0
         self.progress_anchor_xy = None
         self.progress_anchor_t = None
+
+    def _remaining_route_length(self):
+        if len(self.route_xy) < 2:
+            return 0.0
+        i0 = max(0, min(self.waypoint_idx, len(self.route_xy) - 1))
+        seg = self.route_xy[i0:]
+        return float(np.linalg.norm(np.diff(seg, axis=0), axis=1).sum()) if len(seg) > 1 else 0.0
+
+    def _try_request_uav_refinement(self, now, pose_xy, trigger_reason, conservative_len=None, dilate_onboard=False):
+        """Event-triggered mid-mission UAV refinement request when blocked, stalled, or forced into huge detour."""
+        if not self.dynamic_refinement_enabled:
+            return False
+        if self.refinement_requests_sent >= self.max_refinement_requests:
+            return False
+        query_states = self.onboard_map.coarse_effective_states
+        if dilate_onboard:
+            onb = self.onboard_map.onboard_blocked
+            if np.any(onb):
+                dil = binary_dilation(onb, iterations=1)
+                rc_r = self.onboard_map.grid.cell(pose_xy)
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        cell = (rc_r[0] + dr, rc_r[1] + dc)
+                        if self.onboard_map.grid.contains(cell):
+                            dil[cell] = False
+                query_states = np.where(dil, BLOCKED, self.onboard_map.prior_states).astype(np.int8)
+        patches, dual_summary = select_dynamic_patches(
+            self.onboard_map.grid,
+            query_states,
+            self.onboard_map.ground_z_m,
+            pose_xy,
+            self.goal_xy,
+            self.onboard_map.rover_radius_m,
+            planning_cost=self.onboard_map.planning_cost,
+            patch_radius_m=3.5,
+            max_patches=2,
+            exclude_centers=self.requested_patch_centers,
+        )
+        if not patches:
+            return False
+        if conservative_len is not None:
+            opt_len = dual_summary.get("optimistic_length_m")
+            if opt_len is None or (conservative_len - float(opt_len)) < self.min_detour_saving_m:
+                return False
+
+        if dilate_onboard:
+            self.onboard_map.seal_stuck_pinch(pose_xy)
+
+        self.refinement_requests_sent += 1
+        for p in patches:
+            self.requested_patch_centers.append(tuple(p["xy_m"]))
+        req_id = self.refinement_requests_sent
+        self.active_refinement_id = req_id
+        self.refinement_had_fallback_route = conservative_len is not None
+        req_payload = dict(
+            request_id=req_id,
+            created_s=round(float(now), 3),
+            trigger_reason=trigger_reason,
+            rover_xy_m=[round(float(pose_xy[0]), 3), round(float(pose_xy[1]), 3)],
+            goal_xy_m=[round(float(self.goal_xy[0]), 3), round(float(self.goal_xy[1]), 3)],
+            patches=patches,
+            dual_summary=dual_summary,
+        )
+        self.pending_refinement_request = req_payload
+        self.state = "WAITING_UAV_REFINEMENT"
+        self.prev_cmd = (0.0, 0.0)
+        self._record_event(
+            now, "UAV_REFINEMENT_REQUESTED",
+            request_id=req_id,
+            trigger=trigger_reason,
+            patches=patches,
+            optimistic_length_m=dual_summary.get("optimistic_length_m"),
+            corridor_unknown_cells=dual_summary.get("corridor_unknown_cell_count"),
+            rover_xy=pose_xy.tolist(),
+        )
+        return True
+
+    def apply_uav_refinement(self, now, pose_xy, local_obstacles_enu,
+                             new_prior_states, new_ground_z_m, new_planning_cost=None,
+                             response_meta=None):
+        """Ingest incremental UAV refinement patch and replan immediately."""
+        pose_xy = np.asarray(pose_xy, dtype=float)
+        newly_freed = self.onboard_map.merge_uav_refinement(
+            new_prior_states, new_ground_z_m, new_planning_cost,
+        )
+        req_id = self.active_refinement_id
+        self.active_refinement_id = None
+        self.blocked_s = 0.0
+        self.progress_anchor_xy = pose_xy.copy()
+        self.progress_anchor_t = now
+
+        ok, detail = self._attempt_replan(now, pose_xy, local_obstacles_enu, f"UAV_REFINEMENT_{req_id}")
+        rec = dict(
+            request_id=req_id,
+            completed_s=round(float(now), 3),
+            newly_freed_cells=int(newly_freed),
+            unlocked=bool(ok),
+            detail=detail,
+            frames_captured=int((response_meta or {}).get("frames_captured", 0)),
+            flight_duration_s=float((response_meta or {}).get("flight_duration_s", 0.0)),
+            patches=(response_meta or {}).get("patches", []),
+            newly_freed_xy_m=(response_meta or {}).get("newly_freed_xy_m", []),
+        )
+        self.refinement_history.append(rec)
+
+        if ok:
+            self.state = "TRACKING"
+            self._record_event(
+                now, "UAV_REFINEMENT_UNLOCKED",
+                request_id=req_id,
+                newly_freed_cells=int(newly_freed),
+                frames_captured=rec["frames_captured"],
+                flight_duration_s=rec["flight_duration_s"],
+                detail=detail,
+            )
+            return True
+
+        # If first refinement freed cells along part of a longer corridor and budget remains, allow 1 follow-up.
+        if newly_freed > 0 and self._try_request_uav_refinement(
+            now, pose_xy, f"UAV_REFINEMENT_{req_id}_FOLLOWUP", conservative_len=None,
+        ):
+            return False
+
+        self.state = "STOPPING_SAFE"
+        self.pending_stop_reason = f"UAV_REFINEMENT_NO_SAFE_DETOUR: {detail}"
+        self._record_event(
+            now, "UAV_REFINEMENT_NO_SAFE_DETOUR",
+            request_id=req_id,
+            newly_freed_cells=int(newly_freed),
+            reason=detail,
+        )
+        return False
 
     def _record_event(self, now, kind, **details):
         event = dict(time_s=round(float(now), 3), type=kind, **details)
@@ -948,7 +1226,16 @@ class RouteNavigationController:
             obs_body = np.empty((0, 2), dtype=float)
             obs_enu = np.empty((0, 2), dtype=float)
 
-        newly_blocked = self.onboard_map.update(pose_xy, lidar_enu_xy, rgbd_enu_xy)
+        map_lidar_enu = lidar_enu_xy
+        map_rgbd_enu = rgbd_enu_xy
+        if self.victim_ignore_xy is not None:
+            r_ign = self.victim_ignore_radius_m
+            if len(map_lidar_enu):
+                map_lidar_enu = map_lidar_enu[np.linalg.norm(map_lidar_enu - self.victim_ignore_xy, axis=1) > r_ign]
+            if len(map_rgbd_enu):
+                map_rgbd_enu = map_rgbd_enu[np.linalg.norm(map_rgbd_enu - self.victim_ignore_xy, axis=1) > r_ign]
+
+        newly_blocked = self.onboard_map.update(pose_xy, map_lidar_enu, map_rgbd_enu)
         if newly_blocked:
             self._record_event(
                 now, "OBSTACLE_CELLS_BLOCKED",
@@ -965,6 +1252,18 @@ class RouteNavigationController:
             self.prev_cmd = (0.0, 0.0)
             return 0.0, 0.0, dict(state=self.state, status=self.report.status,
                                   dist_to_goal_m=dist_to_goal, stationary_s=self.stationary_s)
+
+        if self.state == "WAITING_UAV_REFINEMENT":
+            self.prev_cmd = (0.0, 0.0)
+            self.progress_anchor_xy = pose_xy.copy()
+            self.progress_anchor_t = now
+            return 0.0, 0.0, dict(
+                state=self.state,
+                status=self.report.status,
+                dist_to_goal_m=dist_to_goal,
+                stationary_s=self.stationary_s,
+                active_refinement_id=self.active_refinement_id,
+            )
 
         if self.state == "STOPPING_SAFE":
             self.prev_cmd = (0.0, 0.0)
@@ -996,13 +1295,31 @@ class RouteNavigationController:
         needs_replan, invalid_reason = self.onboard_map.route_needs_replan(
             self.route_xy, self.waypoint_idx, pose_xy, obs_enu)
         if needs_replan and (now - self.last_replan_t >= 0.8 or newly_blocked):
+            prev_rem_len = self._remaining_route_length()
             ok, detail = self._attempt_replan(now, pose_xy, obs_enu, invalid_reason)
             if not ok:
+                if self._try_request_uav_refinement(now, pose_xy, detail, conservative_len=None):
+                    return 0.0, 0.0, dict(
+                        state=self.state, status=self.report.status,
+                        reason="UAV_REFINEMENT_REQUESTED", dist_to_goal_m=dist_to_goal,
+                        active_refinement_id=self.active_refinement_id,
+                    )
                 self.state = "STOPPING_SAFE"
                 self.pending_stop_reason = detail
                 self.prev_cmd = (0.0, 0.0)
                 return 0.0, 0.0, dict(state=self.state, status=self.report.status,
                                       reason=detail, dist_to_goal_m=dist_to_goal)
+            new_rem_len = self._remaining_route_length()
+            if (new_rem_len - prev_rem_len) >= self.min_detour_saving_m:
+                if self._try_request_uav_refinement(
+                    now, pose_xy, f"HUGE_DETOUR(+{new_rem_len - prev_rem_len:.1f}m)",
+                    conservative_len=new_rem_len,
+                ):
+                    return 0.0, 0.0, dict(
+                        state=self.state, status=self.report.status,
+                        reason="UAV_REFINEMENT_REQUESTED", dist_to_goal_m=dist_to_goal,
+                        active_refinement_id=self.active_refinement_id,
+                    )
 
         self.waypoint_idx, lookahead_xy = compute_lookahead(
             self.route_xy, pose_xy, self.waypoint_idx, self.lookahead_m)
@@ -1039,6 +1356,12 @@ class RouteNavigationController:
             if self.blocked_s >= 1.2 and now - self.last_replan_t >= 1.2:
                 ok, detail = self._attempt_replan(now, pose_xy, obs_enu, "LOCAL_PLANNER_BLOCKED")
                 if not ok:
+                    if self._try_request_uav_refinement(now, pose_xy, detail, conservative_len=None):
+                        return 0.0, 0.0, dict(
+                            state=self.state, status=self.report.status,
+                            reason="UAV_REFINEMENT_REQUESTED", dist_to_goal_m=dist_to_goal,
+                            active_refinement_id=self.active_refinement_id,
+                        )
                     self.state = "STOPPING_SAFE"
                     self.pending_stop_reason = detail
                     self.prev_cmd = (0.0, 0.0)
@@ -1055,6 +1378,14 @@ class RouteNavigationController:
                               f"{map_clear:.2f} m insufficient to continue safely")
                 else:
                     reason = "NO_SAFE_LOCAL_ROLLOUT: unable to find safe control command"
+                if self._try_request_uav_refinement(
+                    now, pose_xy, f"LOCAL_BLOCKED: {reason}", conservative_len=None, dilate_onboard=True,
+                ):
+                    return 0.0, 0.0, dict(
+                        state=self.state, status=self.report.status,
+                        reason="UAV_REFINEMENT_REQUESTED", dist_to_goal_m=dist_to_goal,
+                        active_refinement_id=self.active_refinement_id,
+                    )
                 self.state = "STOPPING_SAFE"
                 self.pending_stop_reason = reason
                 self._record_event(now, "LOCAL_STOP", reason=reason, rover_xy=pose_xy.tolist())
@@ -1070,15 +1401,27 @@ class RouteNavigationController:
         elif float(np.linalg.norm(pose_xy - self.progress_anchor_xy)) >= 0.25:
             self.progress_anchor_xy = pose_xy.copy()
             self.progress_anchor_t = now
-        elif now - self.progress_anchor_t >= 16.0:
-            reason = (f"STUCK_NO_PROGRESS: net movement < 0.25 m over 16.0 s "
-                      f"(dist_to_goal={dist_to_goal:.2f} m)")
-            self.state = "STOPPING_SAFE"
-            self.pending_stop_reason = reason
-            self._record_event(now, "STUCK_STOP", reason=reason, rover_xy=pose_xy.tolist())
-            self.prev_cmd = (0.0, 0.0)
-            return 0.0, 0.0, dict(state=self.state, status=self.report.status,
-                                  reason=reason, dist_to_goal_m=dist_to_goal)
+        elif now - self.progress_anchor_t >= 10.0:
+            if (self.dynamic_refinement_enabled
+                    and self.refinement_requests_sent < self.max_refinement_requests
+                    and self._try_request_uav_refinement(
+                        now, pose_xy, f"STUCK_NEAR_OBSTACLE(dist={dist_to_goal:.2f}m)",
+                        conservative_len=None, dilate_onboard=True,
+                    )):
+                return 0.0, 0.0, dict(
+                    state=self.state, status=self.report.status,
+                    reason="UAV_REFINEMENT_REQUESTED", dist_to_goal_m=dist_to_goal,
+                    active_refinement_id=self.active_refinement_id,
+                )
+            if now - self.progress_anchor_t >= 16.0:
+                reason = (f"STUCK_NO_PROGRESS: net movement < 0.25 m over 16.0 s "
+                          f"(dist_to_goal={dist_to_goal:.2f} m)")
+                self.state = "STOPPING_SAFE"
+                self.pending_stop_reason = reason
+                self._record_event(now, "STUCK_STOP", reason=reason, rover_xy=pose_xy.tolist())
+                self.prev_cmd = (0.0, 0.0)
+                return 0.0, 0.0, dict(state=self.state, status=self.report.status,
+                                      reason=reason, dist_to_goal_m=dist_to_goal)
 
         self.prev_cmd = (v_cmd, w_cmd)
         min_lidar = float(np.min(np.linalg.norm(lidar_body_xy, axis=1))) if len(lidar_body_xy) else None

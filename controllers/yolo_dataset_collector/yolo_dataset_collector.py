@@ -19,7 +19,9 @@ from scipy.spatial.transform import Rotation
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "evaluation"))
+sys.path.insert(0, str(ROOT / "tools"))
 from metrics import height_at, look_at_rotation
+from posture_casualty import POSTURE_LOCAL_POINTS
 
 
 BODY_LOCAL_POINTS = np.array(
@@ -98,14 +100,20 @@ def _ground_aligned_axis_angle(meta, x, y, yaw):
     return [*(rv / ang).tolist(), ang]
 
 
-def _project_casualties(cam_pos, cam_rot, width, height, fov, depth_img, victims, min_vis_ratio=0.22):
-    """Project all casualties to 2D YOLO boxes and verify unoccluded visibility via depth."""
+def _project_casualties(cam_pos, cam_rot, width, height, fov, depth_img, victims, min_vis_ratio=0.20):
+    """Project all casualties (each with its posture-specific 3D points) to tight YOLO boxes."""
     focal = width / (2.0 * math.tan(fov / 2.0))
     boxes = []
     ambiguous = False
 
-    for v_pos, v_rot in victims:
-        pts_world = BODY_LOCAL_POINTS @ v_rot.T + v_pos
+    for entry in victims:
+        if len(entry) == 3:
+            v_pos, v_rot, posture = entry
+        else:
+            v_pos, v_rot = entry
+            posture = "supine"
+        local_pts = POSTURE_LOCAL_POINTS.get(posture, BODY_LOCAL_POINTS)
+        pts_world = local_pts @ v_rot.T + v_pos
         pts_cam = (pts_world - cam_pos) @ cam_rot
         in_front = pts_cam[:, 0] > 0.35
         if np.count_nonzero(in_front) < 8:
@@ -199,14 +207,20 @@ def main():
     for _ in range(3):
         sim.step(step_ms)
 
-    victim_nodes = [sim.getFromDef(d) for d in spec["victim_defs"]]
-    victim_nodes = [n for n in victim_nodes if n is not None]
+    raw_defs = spec["victim_defs"]
+    raw_postures = spec.get("victim_postures", ["supine"] * len(raw_defs))
+    victim_entries = []
+    for d, p_name in zip(raw_defs, raw_postures):
+        n = sim.getFromDef(d)
+        if n is not None:
+            victim_entries.append((n, p_name))
+    victim_nodes = [n for n, _ in victim_entries]
     shirt_apps = [sim.getFromDef(d) for d in spec.get("shirt_app_defs", [])]
     shirt_apps = [n for n in shirt_apps if n is not None]
     pants_apps = [sim.getFromDef(d) for d in spec.get("pants_app_defs", [])]
     pants_apps = [n for n in pants_apps if n is not None]
     print(
-        f"[YOLO Collector] {prefix}: {len(victim_nodes)} victims, "
+        f"[YOLO Collector] {prefix}: {len(victim_nodes)} victims ({[p for _, p in victim_entries]}), "
         f"{len(shirt_apps)} shirt apps, {len(pants_apps)} pants apps.",
         flush=True,
     )
@@ -244,7 +258,7 @@ def main():
                 cf.setSFColor(jittered)
         for _ in range(2):
             sim.step(step_ms)
-        return [_node_pose(n) for n in victim_nodes]
+        return [(*_node_pose(n), p_name) for n, p_name in victim_entries]
 
     victims = randomize_victims()
     counts = dict(uav_pos=0, uav_neg=0, rover_pos=0, rover_neg=0, skipped=0, refreshes=1)
@@ -295,7 +309,7 @@ def main():
             victims = randomize_victims()
             counts["refreshes"] += 1
             since_refresh = 0
-        v_pos, _ = rng.choice(victims)
+        v_pos = rng.choice(victims)[0]
         alt = rng.uniform(10.5, 22.0)
         dx = rng.uniform(-6.0, 6.0)
         dy = rng.uniform(-4.4, 4.4)
@@ -319,7 +333,7 @@ def main():
     attempts = 0
     while counts["rover_pos"] < target_rov_pos and attempts < target_rov_pos * 5:
         attempts += 1
-        v_pos, _ = rng.choice(victims)
+        v_pos = rng.choice(victims)[0]
         dist = rng.uniform(1.05, 4.4)
         az = rng.uniform(-math.pi, math.pi)
         ex = float(np.clip(v_pos[0] + dist * math.cos(az), -19.0, 19.0))

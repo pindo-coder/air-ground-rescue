@@ -97,7 +97,7 @@ def main():
     parser.add_argument("--profile", choices=PROFILES, default="local")
     parser.add_argument("--goal")
     parser.add_argument("--planner", choices=("astar", "igha_vctp"), default="astar")
-    parser.add_argument("--obstacle", choices=("none", "detour", "block"), default="none")
+    parser.add_argument("--obstacle", choices=("none", "detour", "block", "dynamic"), default="none")
     parser.add_argument("--obstacle-xy", nargs=2, type=float)
     parser.add_argument("--obstacle-size", nargs=3, type=float)
     parser.add_argument("--timeout", type=float, default=90.0)

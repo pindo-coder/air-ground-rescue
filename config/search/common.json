@@ -2,7 +2,7 @@
   "provisional_conditions": true,
   "robots": 1,
   "sensors": ["360-degree LiDAR", "aligned RGB-D", "wheel encoders", "noisy IMU"],
-  "cargo_capacity": 2,
+  "cargo_capacity": 3,
   "distance_budget_m": 80,
   "delivery_deadline_after_report_s": 120,
   "max_duration_s": 600,
