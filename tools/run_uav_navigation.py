@@ -79,10 +79,28 @@ OBSTACLE_PRESETS = {
             "color_rgb": [0.92, 0.42, 0.08],
         }
     ],
+    ("full", "canopy_block"): [
+        {
+            "name": "east_trail_landslide_main",
+            "kind": "blocking_debris",
+            "xy_enu_m": [14.55, -11.55],
+            "size_m": [3.50, 0.65, 0.60],
+            "yaw_rad": 0.05,
+            "color_rgb": [0.58, 0.26, 0.20],
+        },
+        {
+            "name": "east_trail_landslide_flank",
+            "kind": "blocking_debris",
+            "xy_enu_m": [17.10, -11.55],
+            "size_m": [1.80, 0.65, 0.60],
+            "yaw_rad": 0.0,
+            "color_rgb": [0.52, 0.30, 0.22],
+        },
+    ],
 }
 
 
-def build_nav_world(path, config, injected_obstacles, reuse_map=False):
+def build_nav_world(path, config, injected_obstacles, reuse_map=False, dynamic_refinement=False):
     source = ROOT / "worlds/search_D.wbt"
     terrain_file = ROOT / "evaluation/search/D.json"
     if not source.is_file() or not terrain_file.is_file():
@@ -90,15 +108,19 @@ def build_nav_world(path, config, injected_obstacles, reuse_map=False):
     scene = source.read_text(encoding="utf-8")
     terrain = json.loads(terrain_file.read_text(encoding="utf-8"))
     flight = config["flight"]
-    x, y = flight["waypoints_xy_enu_m"][0]
+    start = config["deployment_xy_enu_m"]
+    if reuse_map and dynamic_refinement:
+        x, y = float(start[0]), float(start[1])
+        drone_controller = "uav_mapper"
+    else:
+        x, y = flight["waypoints_xy_enu_m"][0]
+        drone_controller = "<none>" if reuse_map else "uav_mapper"
     z = flight["altitude_enu_m"]
-    drone_controller = "<none>" if reuse_map else "uav_mapper"
     scene = replace_node(
         scene,
         r"\bDEF\s+OBSERVER_DRONE\s+ObserverDrone",
         f'DEF OBSERVER_DRONE ObserverDrone {{ translation {x} {y} {z} controller "{drone_controller}" }}',
     )
-    start = config["deployment_xy_enu_m"]
     position = [*start, height_at(terrain, *start) + 0.035]
     fixture = json.dumps(json.dumps({
         "deployment_xyz_m": position,
@@ -147,6 +169,12 @@ def draw_nav_preview(folder, route_doc, eval_summary, rover_status):
     cells = np.zeros((*states.shape, 3), dtype=np.uint8)
     for state, color in palette.items():
         cells[states == state] = color
+    dyn_ref = rover_status.get("dynamic_refinement") or {}
+    for rec in dyn_ref.get("history", []):
+        for xy in rec.get("newly_freed_xy_m", []):
+            rc = grid.cell(xy)
+            if grid.contains(rc):
+                cells[rc] = (86, 224, 180)
     for item in rover_status.get("onboard_blocked_cells", []):
         r, c = item["row"], item["col"]
         if 0 <= r < states.shape[0] and 0 <= c < states.shape[1]:
@@ -263,7 +291,8 @@ def run(profile="local", goal=None, planner="astar", refinement_strategy=None,
         obstacle="none", obstacle_xy=None, obstacle_size=None,
         map_from=None, visible=False, realtime=False, keep_open=False,
         port=18556, timeout=240.0, nadir_only=False, local_policy="rule",
-        checkpoint=None, record_expert=False, expert_mix=0.0, policy_seed=17):
+        checkpoint=None, record_expert=False, expert_mix=0.0, policy_seed=17,
+        dynamic_refinement=False):
     if local_policy not in ("rule", "neural"):
         raise ValueError(f"Unknown local policy: {local_policy}")
     if (local_policy == "neural") != (checkpoint is not None):
@@ -304,6 +333,8 @@ def run(profile="local", goal=None, planner="astar", refinement_strategy=None,
     policy_tag = "_neural" if local_policy == "neural" else ""
     if record_expert:
         policy_tag += "_capture"
+    if dynamic_refinement:
+        policy_tag += "_dynref"
     run_id = f"uav_nav_D_{profile}{planner_tag}_{obs_tag}{policy_tag}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
     folder = ROOT / "runs" / run_id
     folder.mkdir(parents=True)
@@ -324,7 +355,7 @@ def run(profile="local", goal=None, planner="astar", refinement_strategy=None,
             raise FileNotFoundError(f"uav_map.npz not found in {src}")
 
     world = ROOT / "worlds" / f"_validation_{run_id}.wbt"
-    build_nav_world(world, config, injected, reuse_map=reuse_map)
+    build_nav_world(world, config, injected, reuse_map=reuse_map, dynamic_refinement=dynamic_refinement)
     executable = executable_path()
     if not executable.is_file():
         raise FileNotFoundError(f"Webots executable not found: {executable}")
@@ -351,6 +382,8 @@ def run(profile="local", goal=None, planner="astar", refinement_strategy=None,
         UAV_LOCAL_RECORD="1" if record_expert else "0",
         UAV_LOCAL_EXPERT_MIX=str(expert_mix),
         UAV_LOCAL_SEED=str(policy_seed),
+        UAV_DYNAMIC_REFINEMENT="1" if dynamic_refinement else "0",
+        UAV_DYNAMIC_STANDBY_ONLY="1" if (dynamic_refinement and reuse_map) else "0",
         PYTHONDONTWRITEBYTECODE="1",
     )
 
@@ -448,7 +481,7 @@ def main():
                         help="Global planner: baseline 2D terrain A* or VCTP + IGHA* heading-aware search.")
     parser.add_argument("--refinement-strategy", choices=("density", "route_value"), default=None,
                         help="Oblique patch selector when running fresh aerial survey.")
-    parser.add_argument("--obstacle", choices=("none", "detour", "block", "dynamic"), default="none")
+    parser.add_argument("--obstacle", choices=("none", "detour", "block", "dynamic", "canopy_block"), default="none")
     parser.add_argument("--obstacle-xy", nargs=2, type=float, default=None, metavar=("X", "Y"))
     parser.add_argument("--obstacle-size", nargs=3, type=float, default=None, metavar=("SX", "SY", "SZ"))
     parser.add_argument("--map-from", default=None, help="Optional prior run directory to reuse uav_map.npz.")
@@ -463,6 +496,8 @@ def main():
     parser.add_argument("--record-expert", action="store_true", help="Save onboard observations and expert labels.")
     parser.add_argument("--expert-mix", type=float, default=0.0, help="Per-decision expert action probability in DAgger.")
     parser.add_argument("--policy-seed", type=int, default=17)
+    parser.add_argument("--dynamic-refinement", action="store_true",
+                        help="Enable event-triggered mid-mission rover-to-UAV live oblique refinement.")
     args = parser.parse_args()
     folder, summary = run(**vars(args))
     return 0 if summary["status"] in ("ARRIVED", "STOPPED_SAFE") else 1

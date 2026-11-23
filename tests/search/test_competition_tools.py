@@ -18,10 +18,11 @@ from igha_star import plan_igha_star
 from import_real_dsm import dsm_to_uav_map
 from posture_casualty import ALL_POSTURES, POSTURE_LOCAL_POINTS, build_posture_casualty_vrml
 from rescue_dashboard import build_html
-from route_tracker import OnboardObstacleMap
+from route_tracker import OnboardObstacleMap, RouteNavigationController
 from run_uav_rescue import apply_weather_to_world
 from safety_metrics import compute_run_safety_smoothness
-from survey_map import FREE, Grid
+from survey_map import BLOCKED, FREE, UNKNOWN, Grid
+from survey_refinement import schedule_dynamic_oblique, select_dynamic_patches
 from vctp import FineTerrainSurface, VctpChecker
 
 
@@ -118,6 +119,56 @@ class CompetitionToolsTests(unittest.TestCase):
             self.assertIn(f"DEF PANTS_APP_{idx}", vrml)
         # half_buried keypoints strictly cover exposed upper body only (x <= 0.0).
         self.assertLessEqual(float(POSTURE_LOCAL_POINTS["half_buried"][:, 0].max()), 0.0)
+
+    def test_event_triggered_dynamic_uav_refinement_unlocks_blocked_corridor(self):
+        # 12 m x 8 m grid: south corridor FREE (rows 2..6), north bypass UNKNOWN (rows 7..13).
+        coarse = Grid.from_bounds([[0.0, 0.0], [12.0, 8.0]], 0.5)
+        states = np.full(coarse.shape, UNKNOWN, dtype=np.int8)
+        states[2:7, 2:22] = FREE  # 2.5 m wide confirmed south corridor
+        states[7:14, 2:5] = FREE  # west staging free
+        states[7:14, 19:22] = FREE  # east staging free
+        gz = np.where(states == FREE, 0.0, np.nan)
+        omap = OnboardObstacleMap(coarse, states, gz, None, rover_radius_m=0.40)
+
+        # Stamp a full barrier across the south corridor around x = 6.0 m (coarse col 12).
+        barrier_pts = np.array([[6.0, y] for y in np.linspace(1.1, 3.4, 24)])
+        for _ in range(3):
+            omap.update(np.array([4.5, 2.25]), barrier_pts, np.empty((0, 2)))
+
+        route_init = np.array([[2.0, 2.25], [6.0, 2.25], [10.0, 2.25]])
+        ctrl = RouteNavigationController(
+            omap, route_init, np.array([10.0, 2.25]),
+            dynamic_refinement_enabled=True, max_refinement_requests=2,
+        )
+        # Step once: conservative replan fails -> event-triggered UAV refinement request fires!
+        v, w, info = ctrl.step(
+            now=10.0, dt=0.1, pose_xyz=np.array([4.5, 2.25, 0.0]), rpy=(0.0, 0.0, 0.0),
+            speed_mps=0.0, yaw_rate_rad_s=0.0,
+            lidar_body_xy=np.empty((0, 2)), lidar_enu_xy=np.empty((0, 2)),
+            rgbd_body_xy=np.empty((0, 2)), rgbd_enu_xy=np.empty((0, 2)),
+        )
+        self.assertEqual((v, w), (0.0, 0.0))
+        self.assertEqual(ctrl.state, "WAITING_UAV_REFINEMENT")
+        self.assertIsNotNone(ctrl.pending_refinement_request)
+        patches = ctrl.pending_refinement_request["patches"]
+        self.assertGreaterEqual(len(patches), 1)
+
+        sched = schedule_dynamic_oblique(coarse, patches, None, [4.5, 2.25, 16.5], now=10.0)
+        self.assertGreaterEqual(len(sched["stations"]), 6)
+
+        # Simulate UAV confirming the north bypass corridor (rows 7..13, cols 5..19) as FREE.
+        refined_states = states.copy()
+        refined_states[7:14, 5:19] = FREE
+        refined_gz = np.where(refined_states == FREE, 0.0, np.nan)
+        unlocked = ctrl.apply_uav_refinement(
+            now=28.0, pose_xy=np.array([4.5, 2.25]), local_obstacles_enu=np.empty((0, 2)),
+            new_prior_states=refined_states, new_ground_z_m=refined_gz,
+            response_meta=dict(frames_captured=12, flight_duration_s=18.0, patches=patches),
+        )
+        self.assertTrue(unlocked)
+        self.assertEqual(ctrl.state, "TRACKING")
+        # Rover's onboard barrier must remain strictly preserved after UAV merge!
+        self.assertTrue(omap.fine_onboard_blocked.any())
 
 
 if __name__ == "__main__":

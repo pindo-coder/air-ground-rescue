@@ -114,6 +114,7 @@ class LocalPolicyExperiment:
         self.counts = Counter()
         self.latencies_ms = []
         self.pending = None
+        self._stall_ticks = 0
 
     def compute(self, inp):
         features = planner_features(inp) if self.recorder is not None or self.model is not None else None
@@ -128,11 +129,20 @@ class LocalPolicyExperiment:
             self.latencies_ms.append((perf_counter() - start) * 1000.0)
             proposal = tuple(action)
 
+        stalled_proposal = (
+            proposal is not None
+            and inp.dist_to_goal > 0.65
+            and abs(inp.speed_mps) < 0.025
+            and abs(proposal[0]) < 0.025
+            and abs(proposal[1]) < 0.08
+        )
+        self._stall_ticks = self._stall_ticks + 1 if stalled_proposal else 0
+
         if self.model is None:
             source = "expert"
         elif self.recorder is not None and self.rng.random() < self.expert_mix:
             source = "mixture_expert"
-        elif not self.expert.allow_action(inp, proposal):
+        elif not self.expert.allow_action(inp, proposal) or self._stall_ticks >= 10:
             source = "safety_fallback"
             if expert is None:
                 expert = self.expert.compute(inp)

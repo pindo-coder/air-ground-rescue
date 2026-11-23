@@ -67,7 +67,43 @@ def _orientation_rpy_deg(orient):
     return math.degrees(roll), math.degrees(pitch), float(yaw), float(mat[2, 2])
 
 
-def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawned_obstacles):
+def _step_dynamic_drone(folder, drone_trans, drone_rot, now, dyn_state):
+    """Move OBSERVER_DRONE smoothly through any active mid-mission dynamic refinement schedule."""
+    if drone_trans is None or drone_rot is None:
+        return False
+    sched_file = folder / "dynamic_refinement_schedule.json"
+    if sched_file.is_file():
+        try:
+            mtime = sched_file.stat().st_mtime
+            if mtime != dyn_state.get("mtime"):
+                sched = json.loads(sched_file.read_text(encoding="utf-8"))
+                req_id = int(sched.get("request_id", 0))
+                if req_id > dyn_state.get("request_id", 0) and sched.get("stations"):
+                    dyn_state["schedule"] = sched
+                    dyn_state["request_id"] = req_id
+                    dyn_state["mtime"] = mtime
+                    print(
+                        f"[Survey] Flying dynamic UAV refinement #{req_id} "
+                        f"({len(sched['stations'])} oblique views, t={now:.1f}s->{sched['end_s']}s).",
+                        flush=True,
+                    )
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    sched = dyn_state.get("schedule")
+    if sched and sched.get("stations") and now <= float(sched["end_s"]) + 1.0:
+        if now >= float(sched["start_s"]):
+            xyz, yaw, pitch = oblique_pose(sched, now)
+            drone_trans.setSFVec3f(xyz.tolist())
+            vector = Rotation.from_euler("ZY", [yaw, pitch]).as_rotvec()
+            angle = math.sqrt(vector @ vector)
+            axis = (vector / angle).tolist() if angle > 1e-9 else [0.0, 0.0, 1.0]
+            drone_rot.setSFRotation([*axis, angle])
+        return True
+    return False
+
+
+def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawned_obstacles, drone=None):
     """Independent ground-truth evaluator for closed-loop rover navigation."""
     eval_dir = folder / "evaluation"
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +161,9 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
                 ))
     min_dynamic_clearance_m = float("inf")
     dyn_log_rows = []
+    drone_trans = drone.getField("translation") if drone is not None else None
+    drone_rot = drone.getField("rotation") if drone is not None else None
+    dyn_drone_state = {"request_id": 0, "schedule": None, "mtime": None}
 
     with (eval_dir / "trajectory.csv").open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
@@ -136,6 +175,8 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
 
         while simulation.step(period_ms) != -1:
             now = simulation.getTime()
+            if _step_dynamic_drone(folder, drone_trans, drone_rot, now, dyn_drone_state):
+                deadline_s += dt
             pos = rover.getPosition()
             xy = np.asarray(pos[:2], dtype=float)
             for dh in dyn_handles:
@@ -312,6 +353,7 @@ def _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawne
         vctp_audit=selected.get("vctp_audit") or selected.get("astar_vctp_audit"),
         igha_stats=selected.get("igha_vctp", {}).get("stats") if "igha_vctp" in selected else None,
         dual_route=selected.get("dual_route"),
+        dynamic_refinement=rover_status.get("dynamic_refinement"),
         localization_error_m=(dict(
             median=round(float(np.median(loc_errors)), 4),
             p90=round(float(np.quantile(loc_errors, 0.9)), 4),
@@ -754,25 +796,27 @@ def main():
     supplement = None
     terrain = json.loads((ROOT / "evaluation/search/D.json").read_text(encoding="utf-8")) if nav_enabled else None
 
+    standby_only = os.environ.get("UAV_DYNAMIC_STANDBY_ONLY") == "1"
     while simulation.step(200) != -1:
         now = simulation.getTime()
-        if supplement is None and survey_file.is_file():
-            supplement = json.loads(survey_file.read_text(encoding="utf-8"))
-        # Arrive during the first half of each second, then let the sensors
-        # acquire the next sample while both the camera and GPS are stationary.
-        whole = math.floor(now)
-        progress = min(whole + min(2 * (now - whole), 1), end)
-        xy, heading = path_pose(flight["waypoints_xy_enu_m"], flight["speed_mps"], progress)
-        if supplement is not None and supplement["stations"] and now >= supplement["start_s"]:
-            xyz, yaw, pitch = oblique_pose(supplement, now)
-            translation.setSFVec3f(xyz.tolist())
-            vector = Rotation.from_euler("ZY", [yaw, pitch]).as_rotvec()
-            angle = math.sqrt(vector @ vector)
-            axis = (vector / angle).tolist() if angle > 1e-9 else [0.0, 0.0, 1.0]
-            rotation.setSFRotation([*axis, angle])
-        else:
-            translation.setSFVec3f([*map(float, xy), flight["altitude_enu_m"]])
-            rotation.setSFRotation([0.0, 0.0, 1.0, heading])
+        if not standby_only:
+            if supplement is None and survey_file.is_file():
+                supplement = json.loads(survey_file.read_text(encoding="utf-8"))
+            # Arrive during the first half of each second, then let the sensors
+            # acquire the next sample while both the camera and GPS are stationary.
+            whole = math.floor(now)
+            progress = min(whole + min(2 * (now - whole), 1), end)
+            xy, heading = path_pose(flight["waypoints_xy_enu_m"], flight["speed_mps"], progress)
+            if supplement is not None and supplement["stations"] and now >= supplement["start_s"]:
+                xyz, yaw, pitch = oblique_pose(supplement, now)
+                translation.setSFVec3f(xyz.tolist())
+                vector = Rotation.from_euler("ZY", [yaw, pitch]).as_rotvec()
+                angle = math.sqrt(vector @ vector)
+                axis = (vector / angle).tolist() if angle > 1e-9 else [0.0, 0.0, 1.0]
+                rotation.setSFRotation([*axis, angle])
+            else:
+                translation.setSFVec3f([*map(float, xy), flight["altitude_enu_m"]])
+                rotation.setSFRotation([0.0, 0.0, 1.0, heading])
         if deployed_at is None and (folder / "uav_map.npz").is_file():
             rover_position.setSFVec3f(deployment)
             rover_orientation.setSFRotation([0.0, 0.0, 1.0, 0.0])
@@ -790,7 +834,7 @@ def main():
             if os.environ.get("UAV_RESCUE_MODE") == "1":
                 _evaluate_rescue(simulation, rover, folder, terrain, deployed_at, spawned_obstacles)
             else:
-                _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawned_obstacles)
+                _evaluate_navigation(simulation, rover, folder, terrain, deployed_at, spawned_obstacles, drone=drone)
             if os.environ.get("UAV_NAV_KEEP_OPEN") != "1":
                 simulation.simulationQuit(0)
             break

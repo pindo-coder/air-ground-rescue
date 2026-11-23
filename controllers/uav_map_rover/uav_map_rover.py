@@ -184,12 +184,20 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
             expert_mix=float(os.environ.get("UAV_LOCAL_EXPERT_MIX", "0")),
             seed=int(os.environ.get("UAV_LOCAL_SEED", "17")),
         )
+    dynamic_refinement_enabled = os.environ.get("UAV_DYNAMIC_REFINEMENT") == "1"
     controller = RouteNavigationController(
         onboard_map=onboard_map,
         initial_route_xy=selected_route["route_xy_m"],
         goal_xy=selected_route["goal_xy_m"],
         local_planner=experiment,
+        dynamic_refinement_enabled=dynamic_refinement_enabled,
+        max_refinement_requests=int(os.environ.get("UAV_DYNAMIC_REFINEMENT_MAX", "2")),
+        min_detour_saving_m=float(os.environ.get("UAV_DYNAMIC_REFINEMENT_MIN_SAVING_M", "4.5")),
     )
+    req_file = folder / "dynamic_refinement_request.json"
+    resp_file = folder / "dynamic_refinement_response.json"
+    map_file = folder / "uav_map.npz"
+    handled_response_id = 0
 
     drive_start_s = robot.getTime()
     nav_budget_s = float(os.environ.get("UAV_NAV_TIMEOUT_S", "240"))
@@ -261,6 +269,48 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
                     replan_count=controller.report.replan_count,
                 )))
 
+                if controller.pending_refinement_request is not None:
+                    req_doc = controller.pending_refinement_request
+                    controller.pending_refinement_request = None
+                    _write_json_atomic(req_file, req_doc)
+                    nav_deadline_s += 55.0
+                    rgb_cam.saveImage(str(rover_dir / f"uav_refinement_req_{req_doc['request_id']:02d}.jpg"), 90)
+                    print(
+                        f"[Map rover] Blocked -> requested live UAV refinement #{req_doc['request_id']} "
+                        f"at t={now:.1f}s ({len(req_doc['patches'])} patch(es), trigger={req_doc['trigger_reason']}).",
+                        flush=True,
+                    )
+
+                if controller.state == "WAITING_UAV_REFINEMENT" and resp_file.is_file():
+                    try:
+                        resp_doc = json.loads(resp_file.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        resp_doc = None
+                    if resp_doc and int(resp_doc.get("request_id", 0)) == controller.active_refinement_id and int(resp_doc["request_id"]) > handled_response_id:
+                        handled_response_id = int(resp_doc["request_id"])
+                        with np.load(map_file, allow_pickle=False) as refined_data:
+                            new_states = refined_data["states"].copy()
+                            new_gz = refined_data["ground_z_m"].copy()
+                            new_cost = (refined_data["planning_cost"].copy()
+                                        if "planning_cost" in refined_data and "max_slope_deg" in settings else None)
+                        layers["ground_z_m"] = new_gz
+                        if new_cost is not None:
+                            layers["planning_cost"] = new_cost
+                        obs_enu_now = (
+                            np.vstack((lidar_enu, rgbd_enu)) if (len(lidar_enu) and len(rgbd_enu))
+                            else (lidar_enu if len(lidar_enu) else rgbd_enu)
+                        )
+                        unlocked = controller.apply_uav_refinement(
+                            now, pose_xyz[:2], obs_enu_now, new_states, new_gz, new_cost, response_meta=resp_doc,
+                        )
+                        rgb_cam.saveImage(str(rover_dir / f"after_uav_refinement_{handled_response_id:02d}.jpg"), 90)
+                        print(
+                            f"[Map rover] Applied UAV refinement #{handled_response_id} at t={now:.1f}s: "
+                            f"newly_freed={resp_doc.get('newly_freed_cells', 0)}, unlocked={unlocked}, "
+                            f"state={controller.state}.",
+                            flush=True,
+                        )
+
                 if controller.report.replan_count > last_replan_seen:
                     last_replan_seen = controller.report.replan_count
                     rgb_cam.saveImage(str(rover_dir / f"replan_{last_replan_seen:02d}.jpg"), 90)
@@ -319,6 +369,15 @@ def drive_route(robot, folder, settings, grid, states, layers, selected_route):
             for r, c in map(tuple, np.argwhere(onboard_map.onboard_blocked))
         ],
         routes_history=controller.route_history,
+        dynamic_refinement=(dict(
+            enabled=dynamic_refinement_enabled,
+            requests=controller.refinement_requests_sent,
+            unlocked_count=sum(1 for r in controller.refinement_history if r.get("unlocked")),
+            total_newly_freed_cells=sum(int(r.get("newly_freed_cells", 0)) for r in controller.refinement_history),
+            total_uav_frames=sum(int(r.get("frames_captured", 0)) for r in controller.refinement_history),
+            total_uav_flight_s=round(sum(float(r.get("flight_duration_s", 0.0)) for r in controller.refinement_history), 3),
+            history=controller.refinement_history,
+        ) if dynamic_refinement_enabled else None),
     )
     if experiment:
         status_payload["local_policy"] = experiment.close(controller.report.status)
