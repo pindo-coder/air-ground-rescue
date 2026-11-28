@@ -76,7 +76,7 @@ class PersonDetector:
     def detect(self, bgr, depth):
         if self.model is not None:
             boxes=[];scores=[]
-            conf_thr = .50 if self.yolo_single_pass else .35
+            conf_thr = .44 if self.yolo_single_pass else .35
             rotations = (0,) if self.yolo_single_pass else range(4)
             for turns in rotations:
                 view=bgr if turns==0 else np.ascontiguousarray(np.rot90(bgr,-turns))

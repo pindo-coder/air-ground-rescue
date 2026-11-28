@@ -522,19 +522,15 @@ WEATHER_PRESETS = {
         sun_ambient=0.10,
         fill_intensity=0.16,
     ),
-    "fog": dict(
-        luminosity=0.64,
-        fog_color="0.72 0.76 0.78",
-        fog_range=38.0,
-        sun_intensity=0.80,
-        sun_ambient=0.22,
-        fill_intensity=0.45,
-    ),
 }
 
 
 def apply_weather_to_world(world_path, weather):
     """Apply realistic Webots Fog & DirectionalLight weather degradation to a temporary world."""
+    if weather == "fog":
+        from fog_atmosphere import apply_realistic_fog_to_world
+        apply_realistic_fog_to_world(world_path, include_mist_banks=True)
+        return
     spec = WEATHER_PRESETS.get(weather)
     if not spec:
         return
@@ -567,6 +563,8 @@ def run(profile="full", detector="yolo", planner="igha_vctp",
         keep_open=False, record_video=False, video_speed=4.0,
         dynamic_refinement=False,
         port=18578, timeout=480.0):
+    if dynamic_refinement and float(timeout) == 480.0:
+        timeout = 640.0
     if (victim_seed is not None or postures) and map_from is not None:
         raise ValueError("--victim-seed / --postures requires a fresh UAV survey (omit --map-from).")
     if local_policy == "neural" and not checkpoint:

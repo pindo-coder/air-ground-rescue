@@ -21,11 +21,12 @@ from perception import covariance_intersection
 
 
 def _mask_victims_on_states(grid, states, exclude_victims_xy, rover_radius_m,
-                            exclusion_radius_m=0.60, start_xy=None):
+                            exclusion_radius_m=0.60, start_xy=None,
+                            active_victim_xy=None, active_exclusion_radius_m=0.52):
     """Return a copy of coarse `states` with detected victim footprints marked BLOCKED.
 
-    Preserves usability of `start_xy` if the rover is already parked near a victim so
-    departure legs route smoothly around the victim's body without driving over them.
+    Uses a tighter radius around `active_victim_xy` so `center_mask` does not double-inflate
+    beyond comfortable delivery standoff, while keeping full `exclusion_radius_m` for others.
     """
     planning_states = np.asarray(states, dtype=np.int8).copy()
     if not exclude_victims_xy:
@@ -33,17 +34,20 @@ def _mask_victims_on_states(grid, states, exclude_victims_xy, rover_radius_m,
 
     orig_usable = center_mask(grid, states, rover_radius_m)
     victim_centers = [np.asarray(v[:2], dtype=float) for v in exclude_victims_xy]
+    active_xy = None if active_victim_xy is None else np.asarray(active_victim_xy[:2], dtype=float)
     victim_cells = {grid.cell(vxy) for vxy in victim_centers}
-    pad = max(1, math.ceil(exclusion_radius_m / grid.resolution))
 
     for vxy in victim_centers:
+        is_active = active_xy is not None and float(np.linalg.norm(vxy - active_xy)) <= 0.10
+        rad = active_exclusion_radius_m if is_active else exclusion_radius_m
+        pad = max(1, math.ceil(rad / grid.resolution))
         r0, c0 = grid.cell(vxy)
         for dr in range(-pad, pad + 1):
             for dc in range(-pad, pad + 1):
                 cell = (r0 + dr, c0 + dc)
                 if not grid.contains(cell):
                     continue
-                if float(np.linalg.norm(grid.center(cell) - vxy)) <= exclusion_radius_m:
+                if float(np.linalg.norm(grid.center(cell) - vxy)) <= rad:
                     planning_states[cell] = BLOCKED
 
     if start_xy is not None:
@@ -65,7 +69,7 @@ def _mask_victims_on_states(grid, states, exclude_victims_xy, rover_radius_m,
 
 def select_victim_approach_point(grid, states, planning_cost, start_xy, victim_xy,
                                  rover_radius_m, vctp=None, planner_mode="igha_vctp",
-                                 start_yaw=0.0, min_standoff_m=0.85, max_standoff_m=1.58,
+                                 start_yaw=0.0, min_standoff_m=1.15, max_standoff_m=1.48,
                                  ideal_standoff_m=1.32, exclude_victims_xy=None,
                                  victim_exclusion_radius_m=0.60):
     """Select a safe confirmed approach pose beside a detected victim and plan a global route."""
@@ -78,46 +82,52 @@ def select_victim_approach_point(grid, states, planning_cost, start_xy, victim_x
     planning_states = _mask_victims_on_states(
         grid, states, all_victims, rover_radius_m,
         exclusion_radius_m=victim_exclusion_radius_m, start_xy=start_xy,
+        active_victim_xy=victim_xy,
     )
     usable = center_mask(grid, planning_states, rover_radius_m)
 
-    # Search confirmed usable cells in a ring around the detected victim.
+    # Search confirmed usable cells in a ring around the detected victim; expand to 1.58 m if tighter ring is empty.
     r0, c0 = grid.cell(victim_xy)
-    pad = max(2, math.ceil((max_standoff_m + 0.5) / grid.resolution))
     d_start_to_victim = float(np.linalg.norm(victim_xy - start_xy))
+    ring_limits = [max_standoff_m] + ([1.58] if max_standoff_m < 1.579 else [])
     candidates = []
-    for dr in range(-pad, pad + 1):
-        for dc in range(-pad, pad + 1):
-            cell = (r0 + dr, c0 + dc)
-            if not grid.contains(cell) or not usable[cell]:
-                continue
-            xy = grid.center(cell)
-            standoff = float(np.linalg.norm(xy - victim_xy))
-            if not (min_standoff_m <= standoff <= max_standoff_m):
-                continue
-            approach_yaw = math.atan2(victim_xy[1] - xy[1], victim_xy[0] - xy[0])
-            vctp_ok = True
-            vctp_cost = 1.0
-            if vctp is not None:
-                vr = vctp.check_pose(xy[0], xy[1], approach_yaw)
-                vctp_ok = vr.status == "PASS"
-                vctp_cost = vr.cost if vctp_ok else 99.0
-            t_cost = (float(planning_cost[cell])
-                      if planning_cost is not None and np.isfinite(planning_cost[cell]) else 1.0)
-            # Prefer near-side approach points outside the victim's body footprint (>= 1.08 m)
-            # so the rover never drives past or grazes a supine victim to reach their far side.
-            d_start_to_cand = float(np.linalg.norm(xy - start_xy))
-            far_side_pen = 0.75 * max(0.0, d_start_to_cand - d_start_to_victim + 0.25)
-            close_pen = 10.0 * max(0.0, 1.08 - standoff)
-            score = (
-                (0.0 if vctp_ok else 50.0)
-                + 1.4 * abs(standoff - ideal_standoff_m)
-                + close_pen
-                + far_side_pen
-                + 0.35 * t_cost
-                + 0.25 * min(vctp_cost, 10.0)
-            )
-            candidates.append((score, standoff, approach_yaw, xy, vctp_ok))
+    for upper_standoff in ring_limits:
+        pad = max(2, math.ceil((upper_standoff + 0.5) / grid.resolution))
+        candidates = []
+        for dr in range(-pad, pad + 1):
+            for dc in range(-pad, pad + 1):
+                cell = (r0 + dr, c0 + dc)
+                if not grid.contains(cell) or not usable[cell]:
+                    continue
+                xy = grid.center(cell)
+                standoff = float(np.linalg.norm(xy - victim_xy))
+                if not (min_standoff_m <= standoff <= upper_standoff):
+                    continue
+                approach_yaw = math.atan2(victim_xy[1] - xy[1], victim_xy[0] - xy[0])
+                vctp_ok = True
+                vctp_cost = 1.0
+                if vctp is not None:
+                    vr = vctp.check_pose(xy[0], xy[1], approach_yaw)
+                    vctp_ok = vr.status == "PASS"
+                    vctp_cost = vr.cost if vctp_ok else 99.0
+                t_cost = (float(planning_cost[cell])
+                          if planning_cost is not None and np.isfinite(planning_cost[cell]) else 1.0)
+                # Prefer near-side approach points outside the victim's body footprint (>= 1.08 m)
+                # so the rover never drives past or grazes a supine victim to reach their far side.
+                d_start_to_cand = float(np.linalg.norm(xy - start_xy))
+                far_side_pen = 0.75 * max(0.0, d_start_to_cand - d_start_to_victim + 0.25)
+                close_pen = 14.0 * max(0.0, 1.24 - standoff)
+                score = (
+                    (0.0 if vctp_ok else 50.0)
+                    + 1.4 * abs(standoff - ideal_standoff_m)
+                    + close_pen
+                    + far_side_pen
+                    + 0.35 * t_cost
+                    + 0.25 * min(vctp_cost, 10.0)
+                )
+                candidates.append((score, standoff, approach_yaw, xy, vctp_ok))
+        if candidates:
+            break
 
     candidates.sort(key=lambda item: item[0])
     if not candidates:

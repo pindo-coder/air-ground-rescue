@@ -11,7 +11,7 @@ from survey_map import FREE, UNKNOWN, ground_slope
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "controllers/uav_map_rover") not in sys.path:
     sys.path.insert(0, str(ROOT / "controllers/uav_map_rover"))
-from grid_route import plan_dual
+from grid_route import center_mask, plan_dual
 
 
 def select_patches_density(grid, layers, settings):
@@ -49,7 +49,32 @@ def select_patches_density(grid, layers, settings):
     return patches, []
 
 
-def select_patches_route_value(grid, layers, settings):
+def _nearest_victim_goal_xy(grid, states, opt_usable, victim_xy):
+    """Find nearest feasible approach cell within 0.90..1.55 m of a detected victim."""
+    vxy = np.asarray(victim_xy[:2], dtype=float)
+    r0, c0 = grid.cell(vxy)
+    pad = max(3, math.ceil(1.8 / grid.resolution))
+    free_cands = []
+    opt_cands = []
+    for dr in range(-pad, pad + 1):
+        for dc in range(-pad, pad + 1):
+            cell = (r0 + dr, c0 + dc)
+            if not grid.contains(cell) or not opt_usable[cell]:
+                continue
+            xy = grid.center(cell)
+            dist = float(np.linalg.norm(xy - vxy))
+            if 0.90 <= dist <= 1.55:
+                (free_cands if states[cell] == FREE else opt_cands).append((dist, xy))
+    if free_cands:
+        return min(free_cands, key=lambda item: item[0])[1]
+    if opt_cands:
+        return min(opt_cands, key=lambda item: item[0])[1]
+    if grid.contains((r0, c0)) and opt_usable[(r0, c0)]:
+        return vxy
+    return None
+
+
+def select_patches_route_value(grid, layers, settings, detected_victims=None):
     """Traversing Mars dual-route + DUCPP route-value-guided patch selection."""
     refinement = settings["refinement"]
     states = layers["states"]
@@ -63,18 +88,34 @@ def select_patches_route_value(grid, layers, settings):
 
     near_floor = distance_transform_edt(states != FREE) * grid.resolution <= 1.75
     observed_ok = layers["observed_views"] >= 2
+    opt_usable = center_mask(grid, np.where(states == 1, 1, FREE).astype(np.int8), radius_rover)
+
+    goals_to_eval = [
+        dict(id=case["id"], label=case.get("label", case["id"]), xy_enu_m=case["xy_enu_m"],
+             reach_bonus=reachability_bonus, saving_scale=1.0)
+        for case in settings["route_goals"]
+    ]
+    for cand in (detected_victims or ()):
+        goal_xy = _nearest_victim_goal_xy(grid, states, opt_usable, cand["mean_enu_m"])
+        if goal_xy is None:
+            continue
+        cid = cand.get("id", "cand")
+        goals_to_eval.append(dict(
+            id=f"victim_{cid}", label=f"victim_{cid}", xy_enu_m=goal_xy.tolist(),
+            reach_bonus=95.0, saving_scale=1.5,
+        ))
 
     cell_value = np.zeros(grid.shape, dtype=float)
     cell_goals = {}
     dual_summaries = []
-    for case in settings["route_goals"]:
+    for case in goals_to_eval:
         dual = plan_dual(
             grid, states, start, case["xy_enu_m"], radius_rover,
             planning_cost=planning_cost, unknown_cost=unknown_cost,
         )
         summary = dict(
             id=case["id"],
-            label=case.get("label", case["id"]),
+            label=case["label"],
             conservative_status=dual["conservative_status"],
             conservative_length_m=dual["conservative_length_m"],
             optimistic_status=dual["optimistic_status"],
@@ -88,8 +129,8 @@ def select_patches_route_value(grid, layers, settings):
         dual_summaries.append(summary)
         if dual["optimistic_status"] != "PLANNED" or not dual["corridor_unknown_cells"]:
             continue
-        goal_value = (reachability_bonus if dual["changes_reachability"]
-                      else float(dual["potential_saving_m"] or 0.0))
+        goal_value = (case["reach_bonus"] if dual["changes_reachability"]
+                      else case["saving_scale"] * float(dual["potential_saving_m"] or 0.0))
         if goal_value < 2.0 and not dual["changes_reachability"]:
             continue
         corridor_cells = [
@@ -172,11 +213,13 @@ def select_patches(grid, layers, settings):
     return patches
 
 
-def schedule_oblique(grid, baseline, settings, now):
+def schedule_oblique(grid, baseline, settings, now, detected_victims=None):
     refinement = settings["refinement"]
     strategy = refinement.get("strategy", "density")
     if strategy == "route_value":
-        patches, dual_routes = select_patches_route_value(grid, baseline, settings)
+        patches, dual_routes = select_patches_route_value(
+            grid, baseline, settings, detected_victims=detected_victims,
+        )
     else:
         patches, dual_routes = select_patches_density(grid, baseline, settings)
     altitude = refinement["altitude_enu_m"]

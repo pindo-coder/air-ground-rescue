@@ -300,7 +300,10 @@ def main():
             if "refinement" not in settings:
                 break
             save_prior(folder / "uav_map_nadir.npz", grid, baseline, timestamps[-1])
-            schedule = schedule_oblique(grid, baseline, settings, now)
+            schedule = schedule_oblique(
+                grid, baseline, settings, now,
+                detected_victims=(victim_tracker.export(min_views=2) if victim_tracker is not None else None),
+            )
             capture_times = {item["capture_s"] for item in schedule["stations"]}
             temporary = folder / "oblique_survey.tmp"
             temporary.write_text(json.dumps(schedule, indent=2), encoding="utf-8")
@@ -320,8 +323,10 @@ def main():
     print(f"[UAV mapper] Captured {len(timestamps)} synchronized observations.", flush=True)
     result = baseline
     if schedule is not None:
-        result = refine_ground(grid, baseline, oblique_points, origins[baseline_count:],
-                               settings["max_slope_deg"], schedule)
+        result, _ = refine_ground_iterative(
+            grid, baseline, oblique_points, origins[baseline_count:],
+            settings["max_slope_deg"], schedule, max_passes=4,
+        )
     fine_z = compose_fine_ground(grid, fine_views, result["states"], result["ground_z_m"], subdiv=4)
     result["fine_ground_z_m"] = fine_z
     result["fine_resolution_m"] = np.float32(grid.resolution / 4.0)

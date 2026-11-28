@@ -509,10 +509,11 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
     stop_reason = None
     tick = 0
     dynamic_refinement_enabled = os.environ.get("UAV_DYNAMIC_REFINEMENT") == "1"
-    max_dyn_reqs = int(os.environ.get("UAV_DYNAMIC_REFINEMENT_MAX", "3"))
+    max_dyn_reqs = int(os.environ.get("UAV_DYNAMIC_REFINEMENT_MAX", "4"))
     dyn_req_count = 0
     dyn_ref_history = []
     dyn_requested_centers = []
+    blocked_retried_vids = set()
     dyn_req_file = folder / "dynamic_refinement_request.json"
     dyn_resp_file = folder / "dynamic_refinement_response.json"
 
@@ -569,8 +570,8 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                                 goal_try,
                                 settings["rover_radius_m"],
                                 planning_cost=layers.get("planning_cost") if "max_slope_deg" in settings else None,
-                                patch_radius_m=3.5,
-                                max_patches=2,
+                                patch_radius_m=4.0,
+                                max_patches=3,
                                 exclude_centers=dyn_requested_centers,
                             )
                             if not patches:
@@ -669,9 +670,9 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     goal_xy=chosen["approach_xy_m"],
                     local_planner=experiment,
                     settle_time_s=0.4,  # We perform full face-victim + 2.2 s settle right after arrival.
-                    goal_tolerance_m=0.28,
+                    goal_tolerance_m=0.22,
                     victim_ignore_xy=victim["mean_enu_m"],
-                    victim_ignore_radius_m=0.80,
+                    victim_ignore_radius_m=0.62,
                 )
                 target_xy = np.asarray(victim["mean_enu_m"], dtype=float)
                 leg_start_s = robot.getTime()
@@ -728,6 +729,11 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                         )) + "\n")
                         telemetry.flush()
 
+                    if float(np.linalg.norm(pose_xyz[:2] - target_xy)) <= 1.28 and float(info["dist_to_goal_m"]) <= 0.48:
+                        for motor in motors:
+                            motor.setVelocity(0.0)
+                        arrived_leg = True
+                        break
                     if controller.report.status == "ARRIVED":
                         arrived_leg = True
                         break
@@ -763,9 +769,14 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                 if not arrived_leg:
                     if overall_status == "TIMEOUT":
                         break
+                    if (dynamic_refinement_enabled and dyn_req_count < max_dyn_reqs
+                            and vid not in blocked_retried_vids
+                            and "OBSTACLE_BLOCKED_NO_CONFIRMED_DETOUR" in str(stop_reason or "")):
+                        blocked_retried_vids.add(vid)
+                        remaining.append(victim)
                     continue
 
-                # Face the detected victim, settle >= 1.8 s, and verify with onboard RGB-D.
+                # Face the detected victim, trim standoff if needed, settle >= 2.2 s, and verify with RGB-D.
                 target_xy = np.asarray(victim["mean_enu_m"], dtype=float)
                 face_deadline = robot.getTime() + 5.0
                 while robot.step(period_ms) != -1 and robot.getTime() < face_deadline:
@@ -782,6 +793,55 @@ def run_rescue_mission(robot, folder, settings, grid, states, layers, map_file, 
                     motors[0].setVelocity(l_r)
                     motors[1].setVelocity(r_r)
                     publish_state("FACE_VICTIM", vid)
+                    maybe_record_rover_cams()
+
+                for motor in motors:
+                    motor.setVelocity(0.0)
+
+                # Bounded sensor-only standoff trim: safely close excess standoff (> 1.44 m -> <= 1.34 m).
+                trim_deadline = robot.getTime() + 2.6
+                while float(np.linalg.norm(estimator.xyz[:2] - target_xy)) > 1.44 and robot.getTime() < trim_deadline:
+                    if robot.step(period_ms) == -1:
+                        break
+                    g = np.asarray(gps.getValues(), dtype=float)
+                    rpy = np.asarray(imu.getRollPitchYaw(), dtype=float)
+                    wheels = np.asarray([enc.getValue() for enc in encoders], dtype=float)
+                    pose_xyz, yaw = estimator.update(g, rpy, wheels, dt, grid, layers["ground_z_m"])
+                    if float(np.linalg.norm(pose_xyz[:2] - target_xy)) <= 1.34:
+                        break
+                    if abs(rpy[0]) >= math.radians(18.0) or abs(rpy[1]) >= math.radians(18.0):
+                        break
+                    layer_ranges = [lidar.getLayerRangeImage(layer) for layer in range(num_layers)]
+                    lidar_body, _ = extract_lidar_obstacles(
+                        layer_ranges, pose_xyz, (rpy[0], rpy[1], yaw),
+                        grid, layers["ground_z_m"], z_bias=estimator.z_bias_m,
+                    )
+                    fwd_lidar = (
+                        lidar_body[(lidar_body[:, 0] > 0.0) & (np.abs(np.arctan2(lidar_body[:, 1], lidar_body[:, 0])) < 0.35)]
+                        if len(lidar_body) else np.empty((0, 2), dtype=float)
+                    )
+                    if len(fwd_lidar) and float(np.min(np.hypot(fwd_lidar[:, 0], fwd_lidar[:, 1]))) <= 1.02:
+                        break
+                    depth_img = np.asarray(depth_cam.getRangeImage(), dtype=np.float32).reshape(depth_h, depth_w)
+                    rgbd_body, _, _ = extract_rgbd_obstacles(
+                        depth_img, pose_xyz, (rpy[0], rpy[1], yaw),
+                        grid, layers["ground_z_m"], z_bias=estimator.z_bias_m, fov=depth_fov,
+                    )
+                    fwd_rgbd = (
+                        rgbd_body[(rgbd_body[:, 0] > 0.0) & (np.abs(np.arctan2(rgbd_body[:, 1], rgbd_body[:, 0])) < 0.35)]
+                        if len(rgbd_body) else np.empty((0, 2), dtype=float)
+                    )
+                    if len(fwd_rgbd) and float(np.min(np.hypot(fwd_rgbd[:, 0], fwd_rgbd[:, 1]))) <= 1.02:
+                        break
+                    center_roi = depth_img[depth_h // 3:(2 * depth_h) // 3, depth_w // 3:(2 * depth_w) // 3]
+                    valid_c = center_roi[np.isfinite(center_roi) & (center_roi > 0.25)]
+                    if valid_c.size and (float(np.median(valid_c)) <= 1.02 or float(np.percentile(valid_c, 10)) <= 1.02):
+                        break
+                    err_yaw = wrap_angle(math.atan2(target_xy[1] - pose_xyz[1], target_xy[0] - pose_xyz[0]) - yaw)
+                    l_r, r_r = wheel_velocities_rad_s(0.15, float(np.clip(1.2 * err_yaw, -0.4, 0.4)))
+                    motors[0].setVelocity(l_r)
+                    motors[1].setVelocity(r_r)
+                    publish_state("STANDOFF_TRIM", vid)
                     maybe_record_rover_cams()
 
                 for motor in motors:

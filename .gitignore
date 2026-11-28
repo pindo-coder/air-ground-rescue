@@ -6,6 +6,8 @@
 /worlds/search_*.wbt
 /worlds/.search_*.wbproj
 /worlds/textures/D_ground*
+/worlds/textures/D_mist_layer_*
+/worlds/textures/sky/D_misty_valley_*
 /config/search/public/*.json
 /evaluation/search/*.json
 /models/*.pt

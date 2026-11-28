@@ -100,8 +100,11 @@ class CompetitionToolsTests(unittest.TestCase):
             w.write_text("Background { luminosity 1.05 }\nFog { color 0.6 0.6 0.6 visibilityRange 650 }\nDirectionalLight { ambientIntensity 0.30 intensity 2.1 }\nDirectionalLight { intensity 0.70 }\n", encoding="utf-8")
             apply_weather_to_world(w, "fog")
             txt = w.read_text(encoding="utf-8")
-            self.assertIn("visibilityRange 38.0", txt)
-            self.assertIn("luminosity 0.64", txt)
+            self.assertIn('fogType "EXPONENTIAL"', txt)
+            self.assertIn("visibilityRange 42.0", txt)
+            self.assertIn("D_misty_valley_front.jpg", txt)
+            self.assertIn("castShadows FALSE", txt)
+            self.assertIn("DEF VALLEY_MIST_BANKS Group", txt)
 
     def test_multi_posture_casualty_vrml_and_keypoints(self):
         flat = lambda x, y: 0.25

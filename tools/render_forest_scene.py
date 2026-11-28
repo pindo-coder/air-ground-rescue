@@ -17,7 +17,7 @@ sys.path.insert(0,str(ROOT/'evaluation'))
 from metrics import height_at,look_at_rotation
 
 
-def preview_world():
+def preview_world(weather='clear'):
     source=build('D');text=source.read_text(encoding='utf-8')
     private=json.loads((ROOT/'evaluation/search/D.json').read_text())
     x,y=private['spawn'];z=height_at(private,x,y)+.035;yaw=private['spawn_yaw']
@@ -31,6 +31,8 @@ def preview_world():
     substitutions=dict(translation=f'{x} {y} {z}',rotation=f'0 0 1 {yaw}',
         name='"Forest render rover"',controller='"forest_preview"',customData='"{}"')
     for key,value in substitutions.items():body=body.replace(f'{key} IS {key}',f'{key} {value}')
+    for c_field in ('cargo1Scale','cargo2Scale','cargo3Scale'):
+        body=body.replace(f'scale IS {c_field}','scale 1 1 1')
     body=body.replace('Robot {','Robot { supervisor TRUE',1)
     # Audit-only static copy of the exact rover body/camera: no motion or sensor noise.
     while re.search(r'\bphysics\s+Physics\s*\{',body):
@@ -56,6 +58,18 @@ def preview_world():
     text=text.replace('controller "mission_referee"','controller "<none>"')
     text=text.replace('DEF OBSERVER_DRONE ObserverDrone {','DEF OBSERVER_DRONE ObserverDrone { controller "<none>"',1)
     world=ROOT/'worlds/_validation_forest_D.wbt';world.write_text(text,encoding='utf-8')
+    if weather == 'fog':
+        from fog_atmosphere import apply_realistic_fog_to_world
+        apply_realistic_fog_to_world(world, include_mist_banks=True, include_gully_wisps=True)
+        text = world.read_text(encoding='utf-8')
+        text = text.replace('ambientOcclusionRadius .65', 'ambientOcclusionRadius 1.35')
+        world.write_text(text, encoding='utf-8')
+    elif weather and weather != 'clear':
+        from run_uav_rescue import apply_weather_to_world
+        apply_weather_to_world(world, weather)
+        text = world.read_text(encoding='utf-8')
+        text = text.replace('ambientOcclusionRadius .65', 'ambientOcclusionRadius 1.35')
+        world.write_text(text, encoding='utf-8')
     layout=world.parent/f'.{world.stem}.wbproj'
     layout_text=(ROOT/'config/view_layout.wbproj').read_text()
     if layout.exists():
@@ -71,9 +85,10 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--visible',action='store_true')
     parser.add_argument('--keep-open',action='store_true')
+    parser.add_argument('--weather',choices=('clear','lowlight','fog'),default='clear')
     parser.add_argument('--port',type=int,default=18553)
     args=parser.parse_args()
-    world=preview_world()
+    world=preview_world(weather=args.weather)
     run_id=time.strftime('forest_render_%Y%m%d_%H%M%S')+f'_{os.getpid()}'
     folder=ROOT/'runs'/run_id;folder.mkdir()
     env=os.environ.copy();env.update(FOREST_RENDER_RUN=run_id,FOREST_KEEP_OPEN='1' if args.keep_open else '0')
